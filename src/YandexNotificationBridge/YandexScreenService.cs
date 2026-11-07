@@ -21,7 +21,7 @@ public sealed class YandexScreenService : AccessibilityService
     private volatile bool _running;
     private volatile bool _navigatorActive;
     private int _polling;
-    private const int ActivePollMs = 500;
+    private const int ActivePollMs = 200;
     private const int IdlePollMs = 4000;
     private const int ScreenOffPollMs = 10000;
     internal static bool Connected { get; private set; }

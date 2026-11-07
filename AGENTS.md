@@ -5,7 +5,7 @@
 - Один Android-проект (`src/YandexHudHeadUnit`, .NET 9, `net9.0-android`, API 26+) собирает два APK: магнитолу (по умолчанию) и телефон (`PhoneBuild=true`). APK один на обе ABI (`android-arm64;android-arm`, без package-per-ABI).
 - Источник навигации — только Яндекс Навигатор `ru.yandex.yandexnavi`. Яндекс Карты источником не являются.
 - Читаются уведомление и экран (accessibility); распознавание стрелки по пикселям — опция, Android 11+.
-- BLE-вывод идёт через `IHudTransport` / `WiiYiiBleTransport` (WiiYii C1). ESP32-транспорт не реализован; GPS-координаты подготовлены через `IHudLocationTransport`, черновик протокола — `docs/ESP32-HUD-PROTOCOL.ru.md`, согласование — в соседнем репозитории `../HUD-Audi-A4-B9-MLB-Evo-Waveshare-ESP32-S3-Touch-LCD-3.49/docs/phone_protocol_agreement.md`. Кода нет ни с одной стороны.
+- BLE-вывод: `IHudTransport` / `WiiYiiBleTransport` (WiiYii C1) и `Esp32HudTransport` (протокол v1, `IEsp32HudTransport`). Транспорт выбирается `Options.Esp32` (тумблер «ESP32 HUD»); `HudScanner` находит оба по Service UUID. Нормативный контракт — `../protocol/spec.md` (v1), схема — `../protocol/schema/protocol.json`, фикстуры — `../protocol/vectors/golden.json`. Кодировщик — `src/YandexHudHeadUnit/Esp32HudProtocol.cs`. `docs/ESP32-HUD-PROTOCOL.ru.md` и согласование — исторические.
 - Release APK не должен получать разрешение `INTERNET`: это заявлено в документации и является осознанным ограничением (поэтому канал HUD — только BLE).
 
 ## Команды
@@ -27,7 +27,21 @@ dotnet run --project tests/YandexHudHeadUnit.Tests -c Release
 ./scripts/build-headunit.ps1 -Phone       # artifacts/phone/
 ```
 
-Скрипты сначала запускают обе группы проверок, затем собирают APK и пишут `SHA256SUMS.txt`. Нужны SDK из `global.json` (9.0.200, rollForward latestFeature), Android workload, Android SDK с платформой 35 и JDK 17/21 (`ANDROID_HOME`, `JAVA_HOME`). При ошибке `XA0030` установите JDK из текста ошибки.
+Скрипты сначала запускают обе группы проверок, затем собирают APK и пишут `SHA256SUMS.txt`. Нужны SDK из `global.json` (9.0.200, rollForward latestFeature), Android workload, Android SDK с платформой 35 и JDK 17 (`ANDROID_HOME`, `JAVA_HOME`). Workload 35.0.7 не принимает JDK 21 — при `XA0030` используйте JDK 17.
+
+Подготовленный тулчейн в `/tmp/opencode`: `dotnet` 9.0.320 + android workload 35.0.7, `android-sdk` (platform 35 / build-tools 35.0.0), `jdk17`, `pwsh`. Перед сборкой:
+
+```bash
+export DOTNET_ROOT=/tmp/opencode/dotnet
+export PATH=/tmp/opencode/dotnet:/tmp/opencode/jdk17/bin:$PATH
+export DOTNET_CLI_HOME=/tmp/opencode/dotnet-home
+export ANDROID_HOME=/tmp/opencode/android-sdk
+export ANDROID_SDK_ROOT=/tmp/opencode/android-sdk
+export JAVA_HOME=/tmp/opencode/jdk17
+export NUGET_PACKAGES=/tmp/opencode/dotnet-home/.nuget/packages
+./scripts/build-phone.sh
+/tmp/opencode/pwsh/pwsh -NoProfile -File scripts/build-headunit.ps1
+```
 
 ## Две сборки
 
@@ -39,6 +53,7 @@ dotnet run --project tests/YandexHudHeadUnit.Tests -c Release
 ## Устройство исходников
 
 - `.sln` нет; собирайте конкретный `.csproj`. В тестовых проектах включён `TreatWarningsAsErrors`, файлы перечислены вручную: новый общий файл добавьте в `.csproj` теста, иначе он проверяться не будет.
+- `src/YandexHudHeadUnit/Esp32HudProtocol.Generated.cs` и `tests/YandexHudHeadUnit.Tests/Esp32HudVectors.Generated.cs` генерируются `python3 ../protocol/tools/gen.py`; не редактировать вручную.
 - Основной `.csproj` подключает весь `src/YandexNotificationBridge/*.cs` (кроме `MainActivity.cs` и отсутствующего `BridgeServer.cs`), но из `Plugin.Yandex` — только `BridgeState.cs` и `HudText.cs`, из `Common` — три модели (`HudNavigationData`, `DirectionInstruction`, `LaneGuidance`).
 - `YandexNotificationParser.cs` и `HudOutputPump.cs` компилируются **только в тестах** — это легаси-парсер, в APK его нет. В рантайме работают `NotificationReader`, `ScreenNavigationReader`, `SourceSelector`.
 - Два разных типа `BridgeState`: `YandexNotificationBridge.BridgeState` (сырое чтение) и `WiiYiiHudNavigator.Plugin.Yandex.BridgeState` (конвертация в `HudNavigationData`); переход — `HudProtocol.Map`.

@@ -35,7 +35,7 @@ internal static class BluetoothAccess
     }
 }
 
-internal sealed record FoundHud(string Address, string Name, BluetoothDevice Device);
+internal sealed record FoundHud(string Address, string Name, BluetoothDevice Device, bool Esp32 = false, bool WiiYii = false);
 
 internal sealed class HudScanner : ScanCallback
 {
@@ -52,15 +52,16 @@ internal sealed class HudScanner : ScanCallback
         try
         {
             var name = result.ScanRecord?.DeviceName ?? device.Name ?? "";
-            bool service = result.ScanRecord?.ServiceUuids?.Any(id => string.Equals(id.ToString(), HudProtocol.ServiceUuid, StringComparison.OrdinalIgnoreCase)) == true;
+            bool wiiyii = result.ScanRecord?.ServiceUuids?.Any(id => string.Equals(id.ToString(), HudProtocol.ServiceUuid, StringComparison.OrdinalIgnoreCase)) == true;
+            bool esp32 = result.ScanRecord?.ServiceUuids?.Any(id => string.Equals(id.ToString(), Esp32HudProtocolConstants.ServiceUuid, StringComparison.OrdinalIgnoreCase)) == true;
             var address = device.Address;
             if (address is null) return;
             lock (_gate)
             {
                 if (!_accepting) return;
                 if (_target is not null ? !address.Equals(_target, StringComparison.OrdinalIgnoreCase) :
-                    !service && !name.Trim().Equals("WYHUD", StringComparison.OrdinalIgnoreCase)) return;
-                var found = new FoundHud(address, string.IsNullOrWhiteSpace(name) ? "WiiYii HUD" : name, device);
+                    !wiiyii && !esp32 && !name.Trim().Equals("WYHUD", StringComparison.OrdinalIgnoreCase)) return;
+                var found = new FoundHud(address, string.IsNullOrWhiteSpace(name) ? (esp32 ? "ESP32 HUD" : "WiiYii HUD") : name, device, esp32, wiiyii);
                 _devices[address] = found;
                 _found?.TrySetResult(found);
             }
@@ -78,7 +79,7 @@ internal sealed class HudScanner : ScanCallback
     internal async Task<FoundHud[]> FindAsync(Context context, CancellationToken token)
     {
         _scanner = BluetoothAccess.Adapter(context)?.BluetoothLeScanner ?? throw new InvalidOperationException("Bluetooth LE недоступен");
-        lock (_gate) { _accepting = true; _devices.Clear(); _error = null; }
+        lock (_gate) { _accepting = true; _target = null; _devices.Clear(); _error = null; }
         try
         {
             using var settings = new ScanSettings.Builder().SetScanMode(Android.Bluetooth.LE.ScanMode.LowLatency)?.Build();
@@ -103,6 +104,7 @@ internal sealed class HudScanner : ScanCallback
         lock (_gate)
         {
             _target = address; _accepting = true;
+            _devices.Clear(); _error = null;
             _found = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         try

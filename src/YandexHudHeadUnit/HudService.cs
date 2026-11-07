@@ -17,6 +17,7 @@ internal static class Options
     internal static bool Boot { get => Prefs.GetBoolean("boot", true); set => Prefs.Edit()!.PutBoolean("boot", value)!.Apply(); }
     internal static bool AutoStartNavigator { get => Prefs.GetBoolean("auto_start_navigator", false); set => Prefs.Edit()!.PutBoolean("auto_start_navigator", value)!.Apply(); }
     internal static bool SendLocation { get => Prefs.GetBoolean("send_location", false); set => Prefs.Edit()!.PutBoolean("send_location", value)!.Apply(); }
+    internal static bool Esp32 { get => Prefs.GetBoolean("esp32", false); set => Prefs.Edit()!.PutBoolean("esp32", value)!.Apply(); }
 }
 
 [Service(Name = BuildFlavor.ComponentNamespace + ".HudService", Exported = false,
@@ -35,6 +36,7 @@ public sealed class HudService : Service
     private readonly object _attemptGate = new();
     private CancellationTokenSource? _attempt;
     private readonly ReconnectSignal _wake = new();
+    private static readonly HudScanner HudScan = new();
     private readonly Handler _main = new(Looper.MainLooper!);
     private bool _destroyed, _restart;
     private int _renewRequested;
@@ -240,13 +242,15 @@ public sealed class HudService : Service
                         if (BluetoothAccess.Problem(this) is null)
                         {
                             SetStatus("Ищу сохранённый HUD…");
-                            using var scanner = new HudScanner();
+                            var scanner = HudScan;
                             try { found = await scanner.FindSavedAsync(this, Options.Address, attempt.Token); }
                             catch (OperationCanceledException) { throw; }
                             catch (Exception ex) { Android.Util.Log.Warn("YandexHUD", "Saved scan: " + ex.Message); }
                         }
+                        if (found is { Esp32: true }) Options.Esp32 = true;
+                        else if (found is { WiiYii: true }) Options.Esp32 = false;
                         SetStatus("Подключение к HUD…");
-                        connection = new WiiYiiBleTransport();
+                        connection = Options.Esp32 ? new Esp32HudTransport() : new WiiYiiBleTransport();
                         await connection.ConnectAsync(this, Options.Address, attempt.Token, found?.Device);
                         retry = 0; Connected = true;
                         TransportSupportsLocation = connection is IHudLocationTransport { SupportsLocation: true };
@@ -258,8 +262,19 @@ public sealed class HudService : Service
                     var cycle = System.Diagnostics.Stopwatch.StartNew();
                     long checkStart = Interlocked.Read(ref _arrowCheckStart);
                     var check = checkStart > 0 ? HudArrowCheck.At(SystemClock.ElapsedRealtime() - checkStart) : null;
-                    var data = check ?? HudProtocol.Map(BridgeHub.Current, Options.Lanes);
-                    await connection.SendAsync(data, attempt.Token);
+                    if (connection is IEsp32HudTransport esp32)
+                    {
+                        await esp32.SendStateAsync(BridgeHub.Current, Options.Lanes, attempt.Token);
+                        LastDirection = "ESP32 / " + (BridgeHub.Current.Maneuver ?? "—");
+                        SetStatus("ESP32 HUD подключён · данные передаются");
+                    }
+                    else
+                    {
+                        var data = check ?? HudProtocol.Map(BridgeHub.Current, Options.Lanes);
+                        await connection.SendAsync(data, attempt.Token);
+                        LastDirection = (data.NextTurnDirection?.ToString() ?? "—") + " / " + HudProtocol.Direction(data.NextTurnDirection);
+                        SetStatus(check is null ? "HUD подключён · данные передаются" : "Проверка стрелок HUD · " + check.NextTurnRoadName);
+                    }
                     if (Options.SendLocation && TransportSupportsLocation &&
                         connection is IHudLocationTransport locationTransport)
                     {
@@ -277,11 +292,9 @@ public sealed class HudService : Service
                         }
                     }
                     LastWrite = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    LastDirection = (data.NextTurnDirection?.ToString() ?? "—") + " / " + HudProtocol.Direction(data.NextTurnDirection);
-                    SetStatus(check is null ? "HUD подключён · данные передаются" : "Проверка стрелок HUD · " + check.NextTurnRoadName);
                     // Do not count GATT discovery/scan as sleep on the next cycle.
                     previousCycle = SystemClock.ElapsedRealtime();
-                    delay = Math.Max(50, 750 - (int)cycle.ElapsedMilliseconds);
+                    delay = Math.Max(50, 250 - (int)cycle.ElapsedMilliseconds);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (OperationCanceledException)
@@ -336,7 +349,7 @@ public sealed class HudService : Service
         {
             try { await BridgeHub.ReadAsync(); }
             catch (Exception ex) { Android.Util.Log.Warn("YandexHUD", "Reader: " + ex.GetType().Name); }
-            await Task.Delay(500, token);
+            await Task.Delay(100, token);
         }
     }
 

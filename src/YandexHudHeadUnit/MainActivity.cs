@@ -17,10 +17,12 @@ public sealed class MainActivity : Activity
 {
     private TextView _connection = null!, _navigation = null!, _permissions = null!, _selected = null!;
     private Button _scanButton = null!, _startButton = null!, _stopButton = null!, _testButton = null!;
+    private Switch _esp32Switch = null!;
     private readonly Handler _handler = new(Looper.MainLooper!);
     private bool _visible, _reading;
     private int _generation;
     private CancellationTokenSource? _scanCancel;
+    private static readonly HudScanner HudScan = new();
     private string? _uiMessage;
     private string? _pendingDiagnostic;
     private static readonly Color Background = Color.Rgb(15, 25, 38);
@@ -90,6 +92,7 @@ public sealed class MainActivity : Activity
         _startButton = Button(actions, "Подключить сохранённый HUD", StartHud);
         _stopButton = Button(actions, "Остановить передачу", StopHud);
         _testButton = Button(actions, "Проверить стрелки HUD", CheckArrows);
+        _esp32Switch = Toggle(actions, "ESP32 HUD (протокол v1)", Options.Esp32, value => Options.Esp32 = value);
         Section(actions, "Разрешения Навигатора");
         Button(actions, "1. Разрешить чтение навигации", () => OpenSettings(Settings.ActionAccessibilitySettings));
         Button(actions, "2. Доступ к уведомлениям Навигатора", () => OpenSettings(Settings.ActionNotificationListenerSettings));
@@ -158,11 +161,12 @@ public sealed class MainActivity : Activity
         button.Click += (_, _) => { try { action(); } catch (Exception ex) { Message(ex.Message); } };
         return button;
     }
-    private void Toggle(LinearLayout parent, string label, bool initial, Action<bool> update)
+    private Switch Toggle(LinearLayout parent, string label, bool initial, Action<bool> update)
     {
         var toggle = new Switch(this) { Text = label, Checked = initial, TextSize = 15 };
         toggle.SetTextColor(Color.White); toggle.SetPadding(0, Dp(14), 0, Dp(14));
         toggle.CheckedChange += (_, e) => update(e.IsChecked); parent.AddView(toggle);
+        return toggle;
     }
     private void Message(string message)
     {
@@ -272,7 +276,7 @@ public sealed class MainActivity : Activity
     private async Task FindHudAsync()
     {
         _scanCancel = new CancellationTokenSource(); _scanButton.Enabled = false;
-        using var scan = new HudScanner();
+        var scan = HudScan;
         try
         {
             Message("Поиск HUD — 12 секунд…");
@@ -284,6 +288,8 @@ public sealed class MainActivity : Activity
                 .SetItems(found.Select(h => h.Name + " · " + h.Address).ToArray(), (_, e) =>
                 {
                     Options.Address = found[e.Which].Address;
+                    Options.Esp32 = found[e.Which].Esp32;
+                    if (_esp32Switch is not null) _esp32Switch.Checked = Options.Esp32;
                     StartHud();
                 })!.SetNegativeButton("Отмена", (_, _) => { })!.Show();
         }
