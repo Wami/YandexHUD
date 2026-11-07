@@ -15,15 +15,20 @@ internal static class Options
     internal static bool Lanes { get => Prefs.GetBoolean("lanes", true); set => Prefs.Edit()!.PutBoolean("lanes", value)!.Apply(); }
     internal static bool VisualArrows { get => Prefs.GetBoolean("visual_arrows", false); set => Prefs.Edit()!.PutBoolean("visual_arrows", value)!.Commit(); }
     internal static bool Boot { get => Prefs.GetBoolean("boot", true); set => Prefs.Edit()!.PutBoolean("boot", value)!.Apply(); }
+    internal static bool AutoStartNavigator { get => Prefs.GetBoolean("auto_start_navigator", false); set => Prefs.Edit()!.PutBoolean("auto_start_navigator", value)!.Apply(); }
+    internal static bool SendLocation { get => Prefs.GetBoolean("send_location", false); set => Prefs.Edit()!.PutBoolean("send_location", value)!.Apply(); }
 }
 
-[Service(Name = BuildFlavor.ComponentNamespace + ".HudService", Exported = false, ForegroundServiceType = ForegroundService.TypeConnectedDevice)]
+[Service(Name = BuildFlavor.ComponentNamespace + ".HudService", Exported = false,
+    ForegroundServiceType = ForegroundService.TypeConnectedDevice | ForegroundService.TypeLocation)]
 public sealed class HudService : Service
 {
     internal const string StopAction = "yandexhud.STOP";
     internal const string ReconnectAction = "yandexhud.RECONNECT";
     internal const string ArrowCheckAction = "yandexhud.CHECK_ARROWS";
+    internal const string LocationAction = "yandexhud.LOCATION";
     private long _arrowCheckStart;
+    private long _lastLocationSent;
     private const string Channel = "hud_connection";
     private CancellationTokenSource? _cancel;
     private Task? _worker;
@@ -40,6 +45,21 @@ public sealed class HudService : Service
     internal static long LastWrite { get; private set; }
     internal static bool Connected { get; private set; }
     internal static string LastDirection { get; private set; } = "—";
+    internal static bool TransportSupportsLocation { get; private set; }
+    internal static bool LocationActive => Volatile.Read(ref _locationActive) != 0;
+    internal static string LocationStatus
+    {
+        get
+        {
+            var source = Volatile.Read(ref _location);
+            return source?.Status ?? Volatile.Read(ref _locationStatus);
+        }
+    }
+    private static string _locationStatus = "GPS: выключено";
+    private static LocationSource? _location;
+    private static int _locationActive;
+    private static long _locationRetryAfter;
+    private static readonly object LocationGate = new();
 
     public override void OnCreate()
     {
@@ -62,7 +82,7 @@ public sealed class HudService : Service
             if (_worker is null) StopSelf();
             return StartCommandResult.NotSticky;
         }
-        try { StartForeground(1, Notification()); }
+        try { StartForegroundCompat(location: false); }
         catch (Exception ex)
         {
             SetStatus("Не удалось запустить фоновую передачу: " + ex.Message);
@@ -74,6 +94,11 @@ public sealed class HudService : Service
         }
         else if (_worker.IsCompleted || _cancel?.IsCancellationRequested == true) _restart = true;
         else if (intent?.Action == ReconnectAction) Reconnect();
+        else if (intent?.Action == LocationAction)
+        {
+            if (Options.SendLocation && TransportSupportsLocation) StartLocation();
+            else StopLocation();
+        }
         else if (intent?.Action == ArrowCheckAction && Connected)
         {
             Interlocked.Exchange(ref _arrowCheckStart, SystemClock.ElapsedRealtime());
@@ -81,6 +106,64 @@ public sealed class HudService : Service
         }
         return StartCommandResult.Sticky;
     }
+
+    private void StartForegroundCompat(bool location)
+    {
+        if (OperatingSystem.IsAndroidVersionAtLeast(29))
+        {
+            var type = ForegroundService.TypeConnectedDevice;
+            if (location) type |= ForegroundService.TypeLocation;
+            StartForeground(1, Notification(), type);
+        }
+        else StartForeground(1, Notification());
+    }
+
+    private void RefreshForegroundType()
+    {
+        _main.Post(() =>
+        {
+            if (_destroyed) return;
+            try { StartForegroundCompat(LocationActive); }
+            catch (Exception ex) { SetLocationStatus("GPS: foreground: " + ex.Message); }
+        });
+    }
+
+    private void StartLocation()
+    {
+        lock (LocationGate)
+        {
+            if (LocationActive) return;
+            if (SystemClock.ElapsedRealtime() < _locationRetryAfter) return;
+            var source = _location ??= new LocationSource(this);
+            if (!source.Start())
+            {
+                _locationRetryAfter = SystemClock.ElapsedRealtime() + 30000;
+                SetLocationStatus(source.Status);
+                return;
+            }
+            _locationRetryAfter = 0;
+            Volatile.Write(ref _locationActive, 1);
+            SetLocationStatus(source.Status);
+        }
+        RefreshForegroundType();
+    }
+
+    private void StopLocation()
+    {
+        bool wasActive = LocationActive;
+        lock (LocationGate)
+        {
+            Volatile.Write(ref _locationActive, 0);
+            var source = _location;
+            _location = null;
+            try { source?.Dispose(); } catch (Exception) { }
+            _locationRetryAfter = 0;
+            SetLocationStatus("GPS: выключено");
+        }
+        if (wasActive) RefreshForegroundType();
+    }
+
+    internal static void SetLocationStatus(string status) => Volatile.Write(ref _locationStatus, status);
 
     private void StartWorker()
     {
@@ -127,6 +210,11 @@ public sealed class HudService : Service
             while (!token.IsCancellationRequested)
             {
                 int delay = 0;
+                if (!Options.SendLocation || !TransportSupportsLocation)
+                {
+                    if (LocationActive) StopLocation();
+                }
+                else if (!LocationActive) StartLocation();
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
                 lock (_attemptGate) _attempt = attempt;
                 try
@@ -138,6 +226,7 @@ public sealed class HudService : Service
                         Interlocked.Exchange(ref _arrowCheckStart, 0);
                         // Some head units keep GATT marked connected across sleep.
                         connection.Dispose(); connection = null; Connected = false;
+                        TransportSupportsLocation = false; StopLocation();
                     }
                     previousCycle = elapsed;
                     if (connection?.Connected != true)
@@ -145,6 +234,7 @@ public sealed class HudService : Service
                         Interlocked.Exchange(ref _arrowCheckStart, 0);
                         connection?.Dispose(); connection = null;
                         Connected = false;
+                        TransportSupportsLocation = false; StopLocation();
                         if (BluetoothAccess.Problem(this, scan: false) is { } problem) throw new IOException(problem);
                         FoundHud? found = null;
                         if (BluetoothAccess.Problem(this) is null)
@@ -159,6 +249,9 @@ public sealed class HudService : Service
                         connection = new WiiYiiBleTransport();
                         await connection.ConnectAsync(this, Options.Address, attempt.Token, found?.Device);
                         retry = 0; Connected = true;
+                        TransportSupportsLocation = connection is IHudLocationTransport { SupportsLocation: true };
+                        if (Options.SendLocation && TransportSupportsLocation) StartLocation();
+                        else if (LocationActive) StopLocation();
                     }
                     // Read the latest snapshot only after connection/backoff completes.
                     // There is no queue of old turns waiting for Bluetooth.
@@ -167,6 +260,22 @@ public sealed class HudService : Service
                     var check = checkStart > 0 ? HudArrowCheck.At(SystemClock.ElapsedRealtime() - checkStart) : null;
                     var data = check ?? HudProtocol.Map(BridgeHub.Current, Options.Lanes);
                     await connection.SendAsync(data, attempt.Token);
+                    if (Options.SendLocation && TransportSupportsLocation &&
+                        connection is IHudLocationTransport locationTransport)
+                    {
+                        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        if (now - _lastLocationSent >= 1000 && _location?.Latest is { } location && location.IsUsable(now))
+                        {
+                            try
+                            {
+                                await locationTransport.SendLocationAsync(location, attempt.Token);
+                                _lastLocationSent = now;
+                                SetLocationStatus("GPS: " + (location.AccuracyMeters is { } meters ? $"{meters:0} м" : "передано"));
+                            }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex) { SetLocationStatus("GPS: " + ex.Message); }
+                        }
+                    }
                     LastWrite = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     LastDirection = (data.NextTurnDirection?.ToString() ?? "—") + " / " + HudProtocol.Direction(data.NextTurnDirection);
                     SetStatus(check is null ? "HUD подключён · данные передаются" : "Проверка стрелок HUD · " + check.NextTurnRoadName);
@@ -178,12 +287,14 @@ public sealed class HudService : Service
                 catch (OperationCanceledException)
                 {
                     connection?.Dispose(); connection = null; Connected = false;
+                    TransportSupportsLocation = false; StopLocation();
                     SetStatus("Восстанавливаю соединение с сохранённым HUD…");
                 }
                 catch (Exception ex)
                 {
                     Interlocked.Exchange(ref _arrowCheckStart, 0);
                     connection?.Dispose(); connection = null; Connected = false;
+                    TransportSupportsLocation = false; StopLocation();
                     int seconds = ReconnectPolicy.RetrySeconds(++retry);
                     SetStatus(ex.Message + $"\nПовтор подключения через {seconds} с.");
                     delay = seconds * 1000;
@@ -197,6 +308,7 @@ public sealed class HudService : Service
         finally
         {
             readCancel.Cancel();
+            TransportSupportsLocation = false; StopLocation();
             // Best-effort explicit reset, then close even if the peripheral vanished.
             if (connection?.Connected == true)
             {
@@ -231,6 +343,7 @@ public sealed class HudService : Service
     public override void OnDestroy()
     {
         _destroyed = true; _cancel?.Cancel(); Running = false; Connected = false;
+        TransportSupportsLocation = false; StopLocation();
         if (_receiver is not null) { try { UnregisterReceiver(_receiver); } catch (Exception) { } }
         base.OnDestroy();
     }

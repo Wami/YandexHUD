@@ -110,4 +110,22 @@ foreach (var (elapsed, code) in new (long, byte)[] { (0, 2), (3000, 3), (6000, 8
     Check(Decode(HudProtocol.Frames(sample)[0])[7] == code, "stationary arrow check reaches native command " + code);
 }
 Check(HudArrowCheck.At(-1) is null && HudArrowCheck.At(12000) is null, "stationary test is bounded and returns to current navigation");
+
+long locationNow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+var location = new HudLocation(55.75, 37.62, 12.5, 180, 5, locationNow);
+Check(location.IsUsable(locationNow), "fresh GPS location is usable");
+Check(!location.IsUsable(locationNow + HudLocation.MaxAgeMilliseconds + 1), "stale GPS location is rejected");
+Check(!(location with { Latitude = 91 }).IsUsable(locationNow), "latitude outside range is rejected");
+Check(!(location with { Longitude = -181 }).IsUsable(locationNow), "longitude outside range is rejected");
+Check(!(location with { Latitude = double.NaN }).IsUsable(locationNow), "nonfinite coordinate is rejected");
+Check(!(location with { AccuracyMeters = HudLocation.MaxAccuracyMeters + 1 }).IsUsable(locationNow), "low accuracy is rejected");
+Check(!(location with { AccuracyMeters = double.NaN }).IsUsable(locationNow), "nonfinite accuracy is rejected");
+Check(!(location with { TimestampUnixMilliseconds = locationNow + 10000 }).IsUsable(locationNow), "future location is rejected");
+Check(!(location with { TimestampUnixMilliseconds = 0 }).IsUsable(locationNow), "missing timestamp is rejected");
+Check(!(location with { BearingDegrees = 361 }).IsUsable(locationNow), "bearing outside range is rejected");
+Check(!(location with { SpeedMetersPerSecond = -1 }).IsUsable(locationNow), "negative speed is rejected");
+Check(StartupPolicy.ShouldAutoStart(true, true, false), "autostart opens Navigator on a normal first create");
+Check(!StartupPolicy.ShouldAutoStart(false, true, false), "disabled autostart does nothing");
+Check(!StartupPolicy.ShouldAutoStart(true, false, false), "autostart does not repeat after recreation");
+Check(!StartupPolicy.ShouldAutoStart(true, true, true), "autostart is suppressed for debug probes");
 Console.WriteLine($"PASS: {checks} head-unit protocol/transport/recovery checks");

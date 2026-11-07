@@ -15,6 +15,15 @@ internal interface IHudTransport : IDisposable
     Task ClearAsync(CancellationToken token);
 }
 
+// Optional capability for transports that accept phone GPS coordinates.
+// The WiiYii protocol has no verified location command, so only a future
+// ESP32 transport should implement this interface.
+internal interface IHudLocationTransport
+{
+    bool SupportsLocation { get; }
+    Task SendLocationAsync(HudLocation location, CancellationToken token);
+}
+
 internal sealed class WiiYiiBleTransport : IHudTransport
 {
     private readonly BleHud _hud = new();
