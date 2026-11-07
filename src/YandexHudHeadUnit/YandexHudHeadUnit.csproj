@@ -3,9 +3,11 @@
     <TargetFramework>net9.0-android</TargetFramework>
     <OutputType>Exe</OutputType>
     <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
-    <ApplicationId>com.avashield.yandexhud.headunit</ApplicationId>
+    <ApplicationId Condition="'$(PhoneBuild)' != 'true'">com.avashield.yandexhud.headunit</ApplicationId>
+    <ApplicationId Condition="'$(PhoneBuild)' == 'true'">com.avashield.yandexhud.phone</ApplicationId>
     <ApplicationVersion>5</ApplicationVersion>
-    <ApplicationDisplayVersion>1.4</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion Condition="'$(PhoneBuild)' != 'true'">1.4</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion Condition="'$(PhoneBuild)' == 'true'">1.4-phone</ApplicationDisplayVersion>
     <RuntimeIdentifiers>android-arm64;android-arm</RuntimeIdentifiers>
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
     <AndroidPackageFormats>apk</AndroidPackageFormats>
@@ -13,6 +15,7 @@
     <PublishTrimmed>false</PublishTrimmed>
     <RunAOTCompilation>false</RunAOTCompilation>
     <DefineConstants>$(DefineConstants);HEADUNIT</DefineConstants>
+    <DefineConstants Condition="'$(PhoneBuild)' == 'true'">$(DefineConstants);PHONE</DefineConstants>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);CA1422</NoWarn>

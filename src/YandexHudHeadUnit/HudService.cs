@@ -17,7 +17,7 @@ internal static class Options
     internal static bool Boot { get => Prefs.GetBoolean("boot", true); set => Prefs.Edit()!.PutBoolean("boot", value)!.Apply(); }
 }
 
-[Service(Name = "com.avashield.yandexhud.headunit.HudService", Exported = false, ForegroundServiceType = ForegroundService.TypeConnectedDevice)]
+[Service(Name = BuildFlavor.ComponentNamespace + ".HudService", Exported = false, ForegroundServiceType = ForegroundService.TypeConnectedDevice)]
 public sealed class HudService : Service
 {
     internal const string StopAction = "yandexhud.STOP";
@@ -106,7 +106,7 @@ public sealed class HudService : Service
         using var stop = new Intent(this, typeof(HudService)).SetAction(StopAction);
         var flags = PendingIntentFlags.UpdateCurrent | PendingIntentFlags.Immutable;
         return new Notification.Builder(this, Channel)
-            .SetContentTitle("Яндекс HUD — магнитола")!
+            .SetContentTitle(BuildFlavor.Title)!
             .SetContentText("Передача навигации работает в фоне")!
             .SetSmallIcon(Resource.Drawable.hud_icon)!
             .SetContentIntent(PendingIntent.GetActivity(this, 0, open, flags))!
@@ -119,7 +119,7 @@ public sealed class HudService : Service
     {
         using var readCancel = CancellationTokenSource.CreateLinkedTokenSource(token);
         var reader = ReadLoopAsync(readCancel.Token);
-        BleHud? connection = null;
+        IHudTransport? connection = null;
         try
         {
             int retry = 0;
@@ -156,7 +156,7 @@ public sealed class HudService : Service
                             catch (Exception ex) { Android.Util.Log.Warn("YandexHUD", "Saved scan: " + ex.Message); }
                         }
                         SetStatus("Подключение к HUD…");
-                        connection = new BleHud();
+                        connection = new WiiYiiBleTransport();
                         await connection.ConnectAsync(this, Options.Address, attempt.Token, found?.Device);
                         retry = 0; Connected = true;
                     }
@@ -166,7 +166,7 @@ public sealed class HudService : Service
                     long checkStart = Interlocked.Read(ref _arrowCheckStart);
                     var check = checkStart > 0 ? HudArrowCheck.At(SystemClock.ElapsedRealtime() - checkStart) : null;
                     var data = check ?? HudProtocol.Map(BridgeHub.Current, Options.Lanes);
-                    await connection.SendAsync(HudProtocol.Frames(data), attempt.Token);
+                    await connection.SendAsync(data, attempt.Token);
                     LastWrite = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     LastDirection = (data.NextTurnDirection?.ToString() ?? "—") + " / " + HudProtocol.Direction(data.NextTurnDirection);
                     SetStatus(check is null ? "HUD подключён · данные передаются" : "Проверка стрелок HUD · " + check.NextTurnRoadName);
@@ -201,7 +201,7 @@ public sealed class HudService : Service
             if (connection?.Connected == true)
             {
                 using var clear = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                try { await connection.SendAsync(HudProtocol.Frames(HudProtocol.Clear()), clear.Token); } catch (Exception) { }
+                try { await connection.ClearAsync(clear.Token); } catch (Exception) { }
             }
             connection?.Dispose();
             try { await reader; } catch (OperationCanceledException) { }
@@ -245,7 +245,7 @@ public sealed class HudService : Service
     }
 }
 
-[BroadcastReceiver(Name = "com.avashield.yandexhud.headunit.BootReceiver", Exported = true)]
+[BroadcastReceiver(Name = BuildFlavor.ComponentNamespace + ".BootReceiver", Exported = true)]
 [IntentFilter([Intent.ActionBootCompleted, Intent.ActionMyPackageReplaced])]
 public sealed class BootReceiver : BroadcastReceiver
 {

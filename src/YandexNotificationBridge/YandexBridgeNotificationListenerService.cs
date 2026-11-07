@@ -6,7 +6,7 @@ using Android.Service.Notification;
 namespace YandexNotificationBridge;
 
 #if HEADUNIT
-[Service(Name = "com.avashield.yandexhud.headunit.YandexNotificationService", Label = "Яндекс HUD — магнитола",
+[Service(Name = YandexHudHeadUnit.BuildFlavor.ComponentNamespace + ".YandexNotificationService", Label = YandexHudHeadUnit.BuildFlavor.NotificationServiceLabel,
 #else
 [Service(Name = "com.avashield.yandexnotificationbridge.YandexBridgeNotificationListenerService", Label = "Yandex Navigation Bridge",
 #endif

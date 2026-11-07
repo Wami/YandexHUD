@@ -3,7 +3,7 @@
 ## Требования
 
 - .NET SDK 9.0.200 или более новый SDK ветки 9.0; `global.json` разрешает более новые feature bands этой ветки.
-- Android workload для .NET 9, Android SDK с платформой API 35 и build-tools, JDK 21.
+- Android workload для .NET 9, Android SDK с платформой API 35 и build-tools, JDK 17 или 21 — та версия, которую принимает установленный workload. При ошибке `XA0030` установите указанную в ней версию JDK.
 - PowerShell 7 для скрипта сборки. Android Studio как редактор не обязателен.
 
 ```powershell
@@ -19,6 +19,24 @@ dotnet workload install android
 ```
 
 Скрипт запускает две группы проверок, собирает Release APK для `arm64-v8a` и `armeabi-v7a`, подписывает и сохраняет результат в `artifacts/release/`. Приложение использует `net9.0-android`, API 35 и минимальный API 26; распознавание кадра отдельно проверяет наличие API 30+.
+
+### Сборка для телефона
+
+Тот же проект собирает отдельный APK для обычного телефона. Добавьте `-Phone` в PowerShell-скрипт:
+
+```powershell
+./scripts/build-headunit.ps1 -Phone -AndroidSdk 'C:/Android/Sdk' -JavaSdk 'C:/Java/jdk-21'
+```
+
+Или используйте Linux/macOS-скрипт:
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export JAVA_HOME="/path/to/jdk-21"
+./scripts/build-phone.sh
+```
+
+Телефонная сборка получает `ApplicationId com.avashield.yandexhud.phone`, версию `1.4-phone` и имя **Яндекс HUD — телефон**; компоненты получают собственное пространство имён. Магнитолочная сборка по умолчанию не меняется. Результат телефона: `artifacts/phone/YandexHUD-Phone-Navigator-1.4.apk`. Для проверки без HUD соберите Debug-вариант с `--debug` (Linux) или `-DebugBuild` (PowerShell): он попадёт в `artifacts/phone-debug/` и содержит запись навигации. Подробная матрица проверки — [в инструкции для телефона](PHONE.ru.md).
 
 ## Подпись
 
@@ -56,7 +74,9 @@ adb shell am start -n com.avashield.yandexhud.headunit/.MainActivity --ez reader
 adb logcat -d -s YandexCameraTest:I
 ```
 
-Debug-режимы `probe_navigation` и `probe_image_only` предназначены для локальной проверки разработчиком: первый записывает состояния навигации в приватный cache приложения, второй игнорирует описание стрелки для проверки изображения. Не публикуйте полученные данные поездок. В Release эти команды исключены.
+Для телефонной сборки используйте `com.avashield.yandexhud.phone/.MainActivity`.
+
+Debug-режимы `probe_navigation` и `probe_image_only` предназначены для локальной проверки разработчиком: первый записывает состояния навигации в приватный cache приложения (60 секунд по умолчанию, до 600 через `--ei probe_seconds`), второй игнорирует описание стрелки для проверки изображения. Не публикуйте полученные данные поездок. В Release эти команды исключены.
 
 ## Структура
 
@@ -66,6 +86,7 @@ Debug-режимы `probe_navigation` и `probe_image_only` предназнач
 | `src/YandexNotificationBridge` | Общий код чтения элементов/уведомлений Яндекса, распознавания и выбора актуальных данных |
 | `src/WiiYiiHudNavigator.Plugin.Yandex` | Преобразование данных, текст HUD и код, используемый регрессионными проверками |
 | `src/WiiYiiHudNavigator.Common` | Общие модели и интерфейс HUD из исходного проекта |
+| `tools/MockRoute` | Отладочный APK для подмены GPS и проверки движения по маршруту; в обычные сборки не входит |
 | `tests` | Две автономные группы проверок .NET |
 
-Основной проект подключает общие `.cs` файлы напрямую и определяет `HEADUNIT`. Названия каталогов сохранены из истории разработки, но старые самостоятельные проекты телефонного моста и MAUI-плагина здесь не собираются.
+Основной проект подключает общие `.cs` файлы напрямую и определяет `HEADUNIT`. Параметр `PhoneBuild=true` дополнительно определяет `PHONE` и переключает идентификатор, имена компонентов и подписи интерфейса. Названия каталогов сохранены из истории разработки, но старые самостоятельные проекты телефонного моста и MAUI-плагина здесь не собираются.

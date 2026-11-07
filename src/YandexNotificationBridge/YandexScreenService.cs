@@ -7,7 +7,7 @@ using Android.Views.Accessibility;
 namespace YandexNotificationBridge;
 
 #if HEADUNIT
-[Service(Name = "com.avashield.yandexhud.headunit.YandexScreenService", Label = "Яндекс HUD — магнитола: чтение навигации",
+[Service(Name = YandexHudHeadUnit.BuildFlavor.ComponentNamespace + ".YandexScreenService", Label = YandexHudHeadUnit.BuildFlavor.ScreenServiceLabel,
 #else
 [Service(Name = "com.avashield.yandexnotificationbridge.YandexScreenService", Label = "Яндекс → HUD: чтение навигации",
 #endif
@@ -19,6 +19,11 @@ public sealed class YandexScreenService : AccessibilityService
     private HandlerThread? _thread;
     private Handler? _worker;
     private volatile bool _running;
+    private volatile bool _navigatorActive;
+    private int _polling;
+    private const int ActivePollMs = 500;
+    private const int IdlePollMs = 4000;
+    private const int ScreenOffPollMs = 10000;
     internal static bool Connected { get; private set; }
     internal static BridgeState? Current => Volatile.Read(ref _current);
     private static BridgeState? _current;
@@ -49,10 +54,22 @@ public sealed class YandexScreenService : AccessibilityService
     }
     public override void OnAccessibilityEvent(AccessibilityEvent? e)
     {
+        bool navigation = NavigationSource.AcceptsPackage(e?.PackageName?.ToString());
 #if HEADUNIT
-        if (NavigationSource.AcceptsPackage(e?.PackageName?.ToString())) YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
+        if (navigation) YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
 #endif
-        // Poll complete snapshots rather than potentially partial event text.
+        // Fast polling runs only while Navigator is the active window. A window
+        // state change wakes the worker immediately instead of waiting for the
+        // idle interval; complete snapshots are still read in Poll.
+        if (navigation && !_navigatorActive)
+        {
+            _navigatorActive = true;
+            _worker?.Post(Poll);
+        }
+        else if (!navigation && e?.EventType == EventTypes.WindowStateChanged)
+        {
+            _navigatorActive = false;
+        }
     }
     public override void OnInterrupt() => Volatile.Write(ref _current, null);
     public override void OnDestroy()
@@ -65,19 +82,36 @@ public sealed class YandexScreenService : AccessibilityService
     }
     private async void Poll()
     {
-        if (!_running) return;
+        if (!_running || Interlocked.Exchange(ref _polling, 1) != 0) return;
+        int delay = IdlePollMs;
         try
         {
+            // The screen is off during normal phone use, and background route
+            // data comes from the notification listener. Do not traverse the
+            // accessibility tree until the user turns the screen back on.
+            if (GetSystemService(PowerService) is Android.OS.PowerManager power && !power.IsInteractive)
+            {
+                _navigatorActive = false;
+                Volatile.Write(ref _current, null);
+                delay = ScreenOffPollMs;
+                return;
+            }
             // Binding queries can block in another app. Keep them off the main
             // looper and socket request path. Stale samples expire in BridgeHub.
             using var root = RootInActiveWindow;
-            if (root is null || !NavigationSource.AcceptsPackage(root.PackageName?.ToString()))
-            { Volatile.Write(ref _current, null); }
-            else
+            bool active = root is not null && NavigationSource.AcceptsPackage(root.PackageName?.ToString());
+            _navigatorActive = active;
+            if (!active)
+            {
+                Volatile.Write(ref _current, null);
+                delay = IdlePollMs;
+                return;
+            }
+            delay = ActivePollMs;
             {
                 var fields = new List<ScreenField>();
                 int budget = 650;
-                Visit(root, fields, ref budget, 0);
+                Visit(root!, fields, ref budget, 0);
                 ManeuverDescription = fields.Where(f => ScreenNavigationReader.IsCurrentArrow(f.Id))
                     .Select(f => f.Description ?? f.Text).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
                 ManeuverDescriptionAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -87,7 +121,7 @@ public sealed class YandexScreenService : AccessibilityService
                     ScreenNavigationReader.ReadTurnDistance(fields) is not null && ScreenArrowGuard.Region(fields) is { } area)
                 {
                     long started = SystemClock.UptimeMillis();
-                    var direction = await _visual.ReadAsync(this, _worker!, root.WindowId, area);
+                    var direction = await _visual.ReadAsync(this, _worker!, root!.WindowId, area);
                     // A capture can finish after a maneuver, window, rotation or
                     // route has changed. Re-read before applying any image result.
                     using var currentRoot = RootInActiveWindow;
@@ -107,7 +141,6 @@ public sealed class YandexScreenService : AccessibilityService
                         NavigationDiagnostics.RecordScreen(currentFields, currentState);
                         Volatile.Write(ref _current, currentState);
                     }
-                    if (_running) _worker?.PostDelayed(Poll, 500);
                     return;
                 }
 #endif
@@ -116,7 +149,15 @@ public sealed class YandexScreenService : AccessibilityService
             }
         }
         catch (Exception) { Volatile.Write(ref _current, null); }
-        if (_running) _worker?.PostDelayed(Poll, 500);
+        finally
+        {
+            Interlocked.Exchange(ref _polling, 0);
+            // A window-state event can arrive while a poll is in flight; the
+            // guard drops that wake-up. If Navigator is active now, do not wait
+            // the idle interval before the next fast sample.
+            int next = _navigatorActive ? Math.Min(delay, ActivePollMs) : delay;
+            if (_running) _worker?.PostDelayed(Poll, next);
+        }
     }
     private static void Visit(AccessibilityNodeInfo node, List<ScreenField> fields, ref int budget, int depth)
     {

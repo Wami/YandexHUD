@@ -10,5 +10,5 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   <queries><package android:name="ru.yandex.yandexnavi" /></queries>
-  <application android:label="Яндекс HUD — магнитола" android:icon="@drawable/hud_icon" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" />
+  <application android:label="Яндекс HUD" android:icon="@drawable/hud_icon" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" />
 </manifest>

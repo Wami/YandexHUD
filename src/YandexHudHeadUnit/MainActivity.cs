@@ -11,7 +11,7 @@ using OperationCanceledException = System.OperationCanceledException;
 
 namespace YandexHudHeadUnit;
 
-[Activity(Name = "com.avashield.yandexhud.headunit.MainActivity", Label = "Яндекс HUD — магнитола", MainLauncher = true, Exported = true,
+[Activity(Name = BuildFlavor.ComponentNamespace + ".MainActivity", Label = BuildFlavor.AppLabel, MainLauncher = true, Exported = true,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize)]
 public sealed class MainActivity : Activity
 {
@@ -31,11 +31,16 @@ public sealed class MainActivity : Activity
         _pendingDiagnostic = savedInstanceState?.GetString("pending_diagnostic");
         Window?.SetStatusBarColor(Background);
         Window?.SetNavigationBarColor(Background);
+        if (OperatingSystem.IsAndroidVersionAtLeast(30)) Window?.SetDecorFitsSystemWindows(false);
         BuildUi();
 #if DEBUG
         // Explicit local test launch only. Fixtures neither post notifications nor transmit to HUD.
         if (Intent?.GetBooleanExtra("reader_self_test", false) == true) CameraReaderSelfTest.Run(this);
-        if (Intent?.GetBooleanExtra("probe_navigation", false) == true) _ = NavigationProbe.RunAsync(this);
+        if (Intent?.GetBooleanExtra("probe_navigation", false) == true)
+        {
+            int seconds = Intent.GetIntExtra("probe_seconds", 60);
+            _ = NavigationProbe.RunAsync(this, seconds);
+        }
         YandexScreenService.IgnoreDescriptionsForProbe = Intent?.GetBooleanExtra("probe_image_only", false) == true;
 #endif
     }
@@ -45,8 +50,8 @@ public sealed class MainActivity : Activity
     private void BuildUi()
     {
         var page = Column(); page.SetPadding(Dp(20), Dp(16), Dp(20), Dp(20)); page.SetBackgroundColor(Background);
-        page.AddView(Text("Яндекс → HUD", 27));
-        page.AddView(Text("Навигатор · 1.4 · магнитола", 14, Color.Rgb(155, 178, 196)));
+        page.AddView(Text(BuildFlavor.Title, 27));
+        page.AddView(Text(BuildFlavor.Subtitle, 14, Color.Rgb(155, 178, 196)));
         bool wide = Resources!.Configuration!.ScreenWidthDp >= 700;
         var body = new LinearLayout(this) { Orientation = wide ? Orientation.Horizontal : Orientation.Vertical };
         var state = Column(); var actions = Column();
@@ -61,24 +66,63 @@ public sealed class MainActivity : Activity
         _navigation = Text("", 23); _navigation.SetPadding(0, Dp(18), 0, Dp(18)); state.AddView(_navigation);
         _permissions = Text("", 15); state.AddView(_permissions);
         _selected = Text("", 13, Color.Rgb(155, 178, 196)); state.AddView(_selected);
+        Button(actions, "Открыть Яндекс Навигатор", OpenNavigator);
+        Section(actions, "HUD");
         _scanButton = Button(actions, "Найти HUD", RequestScan);
         _startButton = Button(actions, "Подключить сохранённый HUD", StartHud);
         _stopButton = Button(actions, "Остановить передачу", StopHud);
         _testButton = Button(actions, "Проверить стрелки HUD", CheckArrows);
-        Button(actions, "Открыть Яндекс Навигатор", OpenNavigator);
+        Section(actions, "Разрешения Навигатора");
         Button(actions, "1. Разрешить чтение навигации", () => OpenSettings(Settings.ActionAccessibilitySettings));
         Button(actions, "2. Доступ к уведомлениям Навигатора", () => OpenSettings(Settings.ActionNotificationListenerSettings));
         Button(actions, "3. Уведомления самого Навигатора", () =>
             StartActivity(new Intent(Settings.ActionAppNotificationSettings).PutExtra(Settings.ExtraAppPackage, NavigationSource.PackageName)));
         Button(actions, "Стрелки с экрана Навигатора", ConfigureVisualArrows);
+        Section(actions, "Настройки");
         Toggle(actions, "Показывать доступные полосы", Options.Lanes, value => Options.Lanes = value);
         Toggle(actions, "Автоматически подключаться к HUD", Options.Boot, value =>
         { Options.Boot = value; if (value) ConnectionRecovery.TryStart(this); });
-        Button(actions, "Как установить и пользоваться", Help);
+        Button(actions, "Энергосбережение приложения", OpenBatterySettings);
+        Section(actions, "Диагностика");
+#if DEBUG
+        Button(actions, "Записать навигацию 60 с", ProbeNavigation);
+#endif
         Button(actions, "Скопировать диагностику", CopyDiagnostics);
         Button(actions, "Сохранить диагностику в файл", SaveDiagnostics);
+        Button(actions, "Как установить и пользоваться", Help);
         page.AddView(body);
-        var scroll = new ScrollView(this); scroll.SetFitsSystemWindows(true); scroll.AddView(page); SetContentView(scroll);
+        var scroll = new ScrollView(this);
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            scroll.SetFitsSystemWindows(false);
+            ApplyInsets(scroll);
+        }
+        else scroll.SetFitsSystemWindows(true);
+        scroll.AddView(page); SetContentView(scroll);
+    }
+
+    private void Section(LinearLayout parent, string title)
+    {
+        var view = Text(title, 15, Color.Rgb(155, 178, 196));
+        view.SetPadding(0, Dp(18), 0, 0);
+        parent.AddView(view);
+    }
+
+    private void ApplyInsets(View view)
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(30)) return;
+        view.SetOnApplyWindowInsetsListener(new SystemBarInsets());
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("android30.0")]
+    private sealed class SystemBarInsets : Java.Lang.Object, View.IOnApplyWindowInsetsListener
+    {
+        public WindowInsets OnApplyWindowInsets(View view, WindowInsets insets)
+        {
+            var bars = insets.GetInsets(WindowInsets.Type.SystemBars() | WindowInsets.Type.DisplayCutout());
+            view.SetPadding(bars.Left, bars.Top, bars.Right, bars.Bottom);
+            return insets;
+        }
     }
 
     private TextView Text(string text, float size, Color? color = null)
@@ -114,8 +158,32 @@ public sealed class MainActivity : Activity
     {
         var launch = PackageManager?.GetLaunchIntentForPackage(NavigationSource.PackageName);
         if (launch is not null) StartActivity(launch);
-        else new AlertDialog.Builder(this).SetTitle("Нужен Яндекс Навигатор")!.SetMessage("Установите отдельное приложение «Яндекс Навигатор» на магнитолу из магазина приложений. Эта сборка получает данные из Навигатора.")!.SetPositiveButton("Понятно", (_, _) => { })!.Show();
+        else new AlertDialog.Builder(this).SetTitle("Нужен Яндекс Навигатор")!.SetMessage("Установите отдельное приложение «Яндекс Навигатор» на " + BuildFlavor.DeviceName + " из магазина приложений. Эта сборка получает данные из Навигатора.")!.SetPositiveButton("Понятно", (_, _) => { })!.Show();
     }
+
+    private void OpenBatterySettings()
+    {
+        // Prefer the system battery-optimization list. Some OEM builds do not
+        // expose it; fall back to the app card, where battery settings live.
+        try { StartActivity(new Intent(Settings.ActionIgnoreBatteryOptimizationSettings)); }
+        catch (ActivityNotFoundException)
+        {
+            try
+            {
+                StartActivity(new Intent(Settings.ActionApplicationDetailsSettings)
+                    .SetData(Android.Net.Uri.Parse("package:" + PackageName)));
+            }
+            catch (ActivityNotFoundException) { OpenSettings(Settings.ActionSettings); }
+        }
+    }
+
+#if DEBUG
+    private void ProbeNavigation()
+    {
+        _uiMessage = "Запись навигации 60 секунд…";
+        _ = NavigationProbe.RunAsync(this, 60);
+    }
+#endif
     private void RequestScan()
     {
         if (_scanCancel is not null) return;
@@ -148,7 +216,7 @@ public sealed class MainActivity : Activity
             Message("Поиск HUD — 12 секунд…");
             var found = await scan.FindAsync(this, _scanCancel.Token);
             if (!_visible) return;
-            if (found.Length == 0) { Message("HUD не найден. Включите проекцию и отключите её от WiiYii на телефоне, затем повторите поиск."); return; }
+            if (found.Length == 0) { Message("HUD не найден. Включите HUD и отключите его от другого приложения или устройства, затем повторите поиск."); return; }
             Message($"Найдено HUD: {found.Length}. Выберите своё устройство.");
             new AlertDialog.Builder(this).SetTitle("Подключить HUD")!
                 .SetItems(found.Select(h => h.Name + " · " + h.Address).ToArray(), (_, e) =>
@@ -273,8 +341,8 @@ public sealed class MainActivity : Activity
         string arrow = item.TrimEnd('!') switch { "L" => "←", "R" => "→", "S" => "↑", "U" => "↶", "SR" => "↗", _ => "?" };
         return item.EndsWith('!') ? "[" + arrow + "]" : arrow;
     }));
-    private void Help() => new AlertDialog.Builder(this).SetTitle("Яндекс HUD — магнитола")!
-        .SetMessage("1. Установите Яндекс Навигатор на магнитолу.\n\n2. Разрешите чтение навигации и доступ к уведомлениям для «Яндекс HUD — магнитола». Если Android блокирует пункт: Настройки → Приложения → Яндекс HUD — магнитола → ⋮ → Разрешить ограниченные настройки.\n\n3. Включите HUD, отключите его от телефона, нажмите «Найти HUD» и выберите WYHUD.\n\n4. Откройте Навигатор: используйте обзор дороги или начните маршрут. Для фона разрешите уведомления самому Навигатору кнопкой «3». В Навигаторе: Настройки → Навигация → Фоновая навигация и Подсказки в фоновом режиме.\n\nКамера появляется, когда Навигатор показывает её предупреждение с расстоянием. Отдельного порога в метрах нет. Звук — из Навигатора. Ограничение на HUD остаётся текстом; улицы передаются латиницей.\n\nПолосы доступны только из свежих распознанных данных Навигатора. Сложные или недоступные полосы скрываются.\n\nРазрешите фоновую работу приложения в настройках питания TEYES. Автоподключение возобновляет ранее включённую передачу при открытии приложения, запуске Навигатора и загрузке Android. После сна соединение восстанавливается. Сохранённый HUD ищется автоматически; повторно выбирать его не нужно. Кнопка «Остановить» отключает и её, и автоматическое подключение до следующего запуска вручную.\n\nРаботает без WiiYii Navigator и отдельного моста. Требуется Android 8+ и доступный приложениям Bluetooth LE.")!
+    private void Help() => new AlertDialog.Builder(this).SetTitle(BuildFlavor.Title)!
+        .SetMessage("1. Установите Яндекс Навигатор на " + BuildFlavor.DeviceName + ".\n\n2. Разрешите чтение навигации и доступ к уведомлениям для «" + BuildFlavor.Title + "». Если Android блокирует пункт: Настройки → Приложения → " + BuildFlavor.Title + " → ⋮ → Разрешить ограниченные настройки.\n\n3. Включите HUD, при необходимости отключите его от другого приложения, нажмите «Найти HUD» и выберите своё устройство.\n\n4. Откройте Навигатор: используйте обзор дороги или начните маршрут. Для фона разрешите уведомления самому Навигатору кнопкой «3». В Навигаторе: Настройки → Навигация → Фоновая навигация и Подсказки в фоновом режиме.\n\nКамера появляется, когда Навигатор показывает её предупреждение с расстоянием. Отдельного порога в метрах нет. Звук — из Навигатора. Ограничение на HUD остаётся текстом; улицы передаются латиницей.\n\nПолосы доступны только из свежих распознанных данных Навигатора. Сложные или недоступные полосы скрываются.\n\nРазрешите фоновую работу приложения в настройках питания Android. Автоподключение возобновляет ранее включённую передачу при открытии приложения, запуске Навигатора и загрузке Android. После сна соединение восстанавливается. Сохранённый HUD ищется автоматически; повторно выбирать его не нужно. Кнопка «Остановить» отключает и её, и автоматическое подключение до следующего запуска вручную.\n\nТребуется Android 8+ и доступный приложениям Bluetooth LE. Для чтения стрелки с экрана нужен Android 11+.")!
         .SetPositiveButton("Понятно", (_, _) => { })!.Show();
 
     private string DiagnosticText()
@@ -284,7 +352,7 @@ public sealed class MainActivity : Activity
         catch (Exception) { maps = "не найдены"; }
         string description = YandexScreenService.ManeuverDescription ?? "нет";
         if (description.Length > 120) description = description[..120];
-        string text = $"Яндекс HUD — магнитола 1.4\n{Build.Manufacturer} {Build.Model}\nAndroid {Build.VERSION.Release}, API {(int)Build.VERSION.SdkInt}\nABI: {string.Join(", ", Build.SupportedAbis ?? [])}\nЯндекс Навигатор: {maps}; уведомления разрешены: {NavigatorCanNotify()}\nBLE feature: {PackageManager?.HasSystemFeature(PackageManager.FeatureBluetoothLe)}\nBluetooth: {BluetoothAccess.Problem(this, scan: false) ?? "доступен"}; поиск: {BluetoothAccess.Problem(this) ?? "доступен"}\nHUD сохранён: {!string.IsNullOrEmpty(Options.Address)}; автоподключение: {Options.Boot}; передача разрешена: {Options.Enabled}\nЭкран: {YandexScreenService.Connected}; уведомления: {YandexBridgeNotificationListenerService.Connected}\nСлужба: {HudService.Running}; соединение: {HudService.Connected}; {HudService.Status}\nИсточник: {BridgeHub.Current.Source}; режим: {BridgeHub.Current.Mode}\nОписание стрелки: {description}; прочитано: {YandexScreenService.ManeuverDescriptionAt}\nРаспознанный поворот: {BridgeHub.Current.Maneuver ?? "нет"}; команда HUD: {HudProtocol.Direction(HudProtocol.Map(BridgeHub.Current, Options.Lanes).NextTurnDirection)}\nПоследняя отправленная стрелка: {HudService.LastDirection}\nПоследняя запись: {HudService.LastWrite}";
+        string text = $"{BuildFlavor.Title} 1.4\n{Build.Manufacturer} {Build.Model}\nAndroid {Build.VERSION.Release}, API {(int)Build.VERSION.SdkInt}\nABI: {string.Join(", ", Build.SupportedAbis ?? [])}\nЯндекс Навигатор: {maps}; уведомления разрешены: {NavigatorCanNotify()}\nBLE feature: {PackageManager?.HasSystemFeature(PackageManager.FeatureBluetoothLe)}\nBluetooth: {BluetoothAccess.Problem(this, scan: false) ?? "доступен"}; поиск: {BluetoothAccess.Problem(this) ?? "доступен"}\nHUD сохранён: {!string.IsNullOrEmpty(Options.Address)}; автоподключение: {Options.Boot}; передача разрешена: {Options.Enabled}\nЭкран: {YandexScreenService.Connected}; уведомления: {YandexBridgeNotificationListenerService.Connected}\nСлужба: {HudService.Running}; соединение: {HudService.Connected}; {HudService.Status}\nИсточник: {BridgeHub.Current.Source}; режим: {BridgeHub.Current.Mode}\nОписание стрелки: {description}; прочитано: {YandexScreenService.ManeuverDescriptionAt}\nРаспознанный поворот: {BridgeHub.Current.Maneuver ?? "нет"}; команда HUD: {HudProtocol.Direction(HudProtocol.Map(BridgeHub.Current, Options.Lanes).NextTurnDirection)}\nПоследняя отправленная стрелка: {HudService.LastDirection}\nПоследняя запись: {HudService.LastWrite}";
         return text + $"\nЭкранные изображения разрешены: {Options.VisualArrows}; {ForegroundArrowReader.Status}" + "\n\n" + NavigationDiagnostics.Screen + "\n\n" + NavigationDiagnostics.Notification;
     }
     private void CopyDiagnostics()

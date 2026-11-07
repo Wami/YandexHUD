@@ -22,7 +22,7 @@ internal static class BluetoothAccess
         {
             var adapter = Adapter(context);
             if (adapter is null) return "Android не предоставляет Bluetooth-адаптер этому приложению.";
-            if (!adapter.IsEnabled) return "Bluetooth выключен. Включите его в настройках магнитолы.";
+            if (!adapter.IsEnabled) return "Bluetooth выключен. Включите его в настройках Android.";
             if (scan && adapter.BluetoothLeScanner is null) return "Android не предоставляет поиск Bluetooth LE.";
             if (scan && !OperatingSystem.IsAndroidVersionAtLeast(31) &&
                 context.GetSystemService(Context.LocationService) is Android.Locations.LocationManager location &&
