@@ -35,6 +35,7 @@ internal static class Esp32HudProtocol
         "Straight" => Esp32HudProtocolConstants.MANEUVER_KIND_STRAIGHT,
         "Finish" => Esp32HudProtocolConstants.MANEUVER_KIND_FINISH,
         "Rerouting" => Esp32HudProtocolConstants.MANEUVER_KIND_REROUTING,
+        "Roundabout" => Esp32HudProtocolConstants.MANEUVER_KIND_ROUNDABOUT,
         _ => 0
     };
 

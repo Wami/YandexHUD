@@ -26,6 +26,9 @@ internal static class ScreenNavigationReader
     };
     private static readonly Regex DistancePattern = new(@"^\s*(?<n>(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?)\s*(?<u>км|м|km|m)\s*$", RegexOptions.IgnoreCase);
     private static readonly Regex DurationPattern = new(@"(?<n>\d+)\s*(?<u>ч|h|мин|min)\b", RegexOptions.IgnoreCase);
+    private static readonly Regex RoundaboutPattern = new(
+        @"\b(?:круг\w*|кольц\w*|roundabout|traffic\s+circle|rotary)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     internal static BridgeState Read(IReadOnlyList<ScreenField> fields, long now, IReadOnlyDictionary<string, string>? labels = null)
     {
@@ -81,6 +84,9 @@ internal static class ScreenNavigationReader
     {
         var value = NormalizeManeuver(text);
         if (labels?.TryGetValue(value, out var installed) == true) return installed;
+        // A roundabout exit number does not give the exit angle. Send a neutral
+        // roundabout symbol with the distance instead of guessing a turn.
+        if (RoundaboutPattern.IsMatch(value)) return "Roundabout";
         return value switch
         {
             "поверните направо" or "поворот направо" or "turn right" => "Right",

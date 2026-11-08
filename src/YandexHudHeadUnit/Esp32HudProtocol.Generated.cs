@@ -46,6 +46,7 @@ internal static class Esp32HudProtocolConstants
     public const byte MANEUVER_KIND_STRAIGHT = 9;
     public const byte MANEUVER_KIND_FINISH = 10;
     public const byte MANEUVER_KIND_REROUTING = 11;
+    public const byte MANEUVER_KIND_ROUNDABOUT = 12;
 
     // road_event_kind
     public const byte ROAD_EVENT_KIND_ACCIDENT = 1;

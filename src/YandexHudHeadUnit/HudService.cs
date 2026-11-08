@@ -25,6 +25,7 @@ internal static class Options
 public sealed class HudService : Service
 {
     internal const string StopAction = "yandexhud.STOP";
+    internal const string ExitAction = "yandexhud.EXIT";
     internal const string ReconnectAction = "yandexhud.RECONNECT";
     internal const string ArrowCheckAction = "yandexhud.CHECK_ARROWS";
     internal const string LocationAction = "yandexhud.LOCATION";
@@ -76,11 +77,12 @@ public sealed class HudService : Service
     public override IBinder? OnBind(Intent? intent) => null;
     public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
     {
-        if (intent?.Action == StopAction || !Options.Enabled || string.IsNullOrEmpty(Options.Address))
+        if (intent?.Action is StopAction or ExitAction || !Options.Enabled || string.IsNullOrEmpty(Options.Address))
         {
             Interlocked.Exchange(ref _arrowCheckStart, 0);
             Options.Enabled = false;
             _cancel?.Cancel();
+            if (intent?.Action == ExitAction) MainActivity.CloseFromAutomation();
             if (_worker is null) StopSelf();
             return StartCommandResult.NotSticky;
         }
@@ -188,14 +190,14 @@ public sealed class HudService : Service
         var manager = (NotificationManager)GetSystemService(NotificationService)!;
         manager.CreateNotificationChannel(new NotificationChannel(Channel, "Связь с HUD", NotificationImportance.Low));
         using var open = new Intent(this, typeof(MainActivity));
-        using var stop = new Intent(this, typeof(HudService)).SetAction(StopAction);
+        using var stop = new Intent(this, typeof(HudService)).SetAction(ExitAction);
         var flags = PendingIntentFlags.UpdateCurrent | PendingIntentFlags.Immutable;
         return new Notification.Builder(this, Channel)
             .SetContentTitle(BuildFlavor.Title)!
             .SetContentText("Передача навигации работает в фоне")!
             .SetSmallIcon(Resource.Drawable.hud_icon)!
             .SetContentIntent(PendingIntent.GetActivity(this, 0, open, flags))!
-            .AddAction(new Notification.Action.Builder(null, "Остановить", PendingIntent.GetService(this, 1, stop, flags)).Build())!
+            .AddAction(new Notification.Action.Builder(null, "Стоп", PendingIntent.GetService(this, 1, stop, flags)).Build())!
             .SetOngoing(true)!.Build();
     }
 
@@ -378,6 +380,6 @@ public sealed class BootReceiver : BroadcastReceiver
     public override void OnReceive(Context? context, Intent? intent)
     {
         if (context is not null && intent?.Action is Intent.ActionBootCompleted or Intent.ActionMyPackageReplaced)
-            ConnectionRecovery.TryStart(context);
+            ConnectionRecovery.TryStart(context, Activation.Boot);
     }
 }

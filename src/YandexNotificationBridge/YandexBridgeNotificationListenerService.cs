@@ -29,7 +29,7 @@ public sealed class YandexBridgeNotificationListenerService : NotificationListen
         Refresh();
         BridgeHub.Start();
 #if HEADUNIT
-        YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
+        YandexHudHeadUnit.ConnectionRecovery.TryStart(this, YandexHudHeadUnit.Activation.Notification);
 #endif
     }
 
@@ -40,7 +40,7 @@ public sealed class YandexBridgeNotificationListenerService : NotificationListen
         {
             Refresh();
 #if HEADUNIT
-            YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
+            YandexHudHeadUnit.ConnectionRecovery.TryStart(this, YandexHudHeadUnit.Activation.Notification);
 #endif
         }
     }

@@ -60,11 +60,11 @@
 
 Из того же кода можно собрать отдельный APK **Яндекс HUD — телефон** (`com.avashield.yandexhud.phone`). Он читает Яндекс Навигатор на телефоне так же, как магнитолочная версия, и пока использует прежний BLE-протокол WiiYii. В настройках телефона можно включить автозапуск Навигатора при открытии приложения; передача GPS-координат подготовлена только для ESP32 и пока не отправляется. Вывод на ESP32-HUD из репозитория `WARMW00D/HUD-Audi-A4-B9-MLB-Evo-ESP32-S3-SuperMini-LCD-2.79-NV3007-BLE` пока не реализован: для него нужны новая характеристика в прошивке и отдельный транспорт в приложении.
 
-Сборка, установка и проверка без HUD: [docs/PHONE.ru.md](docs/PHONE.ru.md).
+Сборка, установка и проверка без HUD: [docs/PHONE.ru.md](docs/PHONE.ru.md). Управление из Tasker и ADB: [docs/AUTOMATION.ru.md](docs/AUTOMATION.ru.md).
 
 ## Исходники и сборка
 
-C# / .NET 9 for Android. [Инструкция сборки](docs/BUILDING.ru.md), [изменения](CHANGELOG.md), [сообщить об ошибке](https://github.com/xxXRatJuiceXxx/YandexHUD-TEYES/issues/new/choose).
+C# / .NET 9 for Android. [Инструкция сборки](docs/BUILDING.ru.md), [протокол ESP32-HUD](docs/nav_protocol.md), [изменения](CHANGELOG.md), [сообщить об ошибке](https://github.com/xxXRatJuiceXxx/YandexHUD-TEYES/issues/new/choose).
 
 Это неофициальный общественный проект. Он основан на [avashield/WiiYiiHudNavigator](https://github.com/avashield/WiiYiiHudNavigator); за основу взяты общие модели и интерфейс HUD, добавлены чтение Яндекса и самостоятельное Android-приложение. Авторство сохранено в [NOTICE](NOTICE.md). Лицензия — [GNU AGPL v3](LICENSE). Проект не связан с Яндексом, TEYES или производителем WiiYii.
 

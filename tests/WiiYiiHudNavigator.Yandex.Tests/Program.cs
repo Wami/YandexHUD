@@ -150,7 +150,7 @@ Equal(true, selector.Select(null, notification with { SourceTimestamp = now + 30
 var freshSelector = new YandexNotificationBridge.SourceSelector();
 Equal("notification", freshSelector.Select(screen with { ObservedAtUnixMilliseconds = now - 3000 }, notification, now).Source, "stale screen falls back to actual notification");
 Equal(false, freshSelector.Select(null, YandexNotificationBridge.BridgeState.Inactive, now).Active, "no source clears route");
-Equal<string?>(null, YandexNotificationBridge.ScreenNavigationReader.ReadManeuver("На круговом движении третий съезд"), "do not guess unsupported circle");
+Equal<string?>("Roundabout", YandexNotificationBridge.ScreenNavigationReader.ReadManeuver("На круговом движении третий съезд"), "roundabout maps to a neutral symbol without guessing the exit");
 var slowHud = new SlowHud();
 var pump = new HudOutputPump(slowHud);
 pump.Publish(new() { NextTurnRoadName = "first", CameraDistance = 300 });

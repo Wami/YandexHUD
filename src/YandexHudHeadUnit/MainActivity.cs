@@ -12,14 +12,16 @@ using OperationCanceledException = System.OperationCanceledException;
 namespace YandexHudHeadUnit;
 
 [Activity(Name = BuildFlavor.ComponentNamespace + ".MainActivity", Label = BuildFlavor.AppLabel, MainLauncher = true, Exported = true,
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize)]
+    LaunchMode = LaunchMode.SingleTask, ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize)]
 public sealed class MainActivity : Activity
 {
     private TextView _connection = null!, _navigation = null!, _permissions = null!, _selected = null!;
     private Button _scanButton = null!, _startButton = null!, _stopButton = null!, _testButton = null!;
     private Switch _esp32Switch = null!;
+    private static MainActivity? _current;
     private readonly Handler _handler = new(Looper.MainLooper!);
     private bool _visible, _reading;
+    private bool _navigatorReturnPending;
     private int _generation;
     private CancellationTokenSource? _scanCancel;
     private static readonly HudScanner HudScan = new();
@@ -35,8 +37,7 @@ public sealed class MainActivity : Activity
         Window?.SetNavigationBarColor(Background);
         if (OperatingSystem.IsAndroidVersionAtLeast(30)) Window?.SetDecorFitsSystemWindows(false);
         BuildUi();
-        if (StartupPolicy.ShouldAutoStart(Options.AutoStartNavigator, savedInstanceState is null, IsTestLaunch()))
-            TryAutoStartNavigator();
+        _current = this;
 #if DEBUG
         // Explicit local test launch only. Fixtures neither post notifications nor transmit to HUD.
         if (Intent?.GetBooleanExtra("reader_self_test", false) == true) CameraReaderSelfTest.Run(this);
@@ -90,7 +91,8 @@ public sealed class MainActivity : Activity
         Section(actions, "HUD");
         _scanButton = Button(actions, "Найти HUD", RequestScan);
         _startButton = Button(actions, "Подключить сохранённый HUD", StartHud);
-        _stopButton = Button(actions, "Остановить передачу", StopHud);
+        _stopButton = Button(actions, "Отключить HUD", StopHud);
+        Button(actions, "Стоп — закрыть приложение", StopAndClose);
         _testButton = Button(actions, "Проверить стрелки HUD", CheckArrows);
         _esp32Switch = Toggle(actions, "ESP32 HUD (протокол v1)", Options.Esp32, value => Options.Esp32 = value);
         Section(actions, "Разрешения Навигатора");
@@ -102,7 +104,7 @@ public sealed class MainActivity : Activity
         Section(actions, "Настройки");
         Toggle(actions, "Показывать доступные полосы", Options.Lanes, value => Options.Lanes = value);
         Toggle(actions, "Автоматически подключаться к HUD", Options.Boot, value =>
-        { Options.Boot = value; if (value) ConnectionRecovery.TryStart(this); });
+        { Options.Boot = value; if (value) ConnectionRecovery.TryStart(this, Activation.App); });
         Toggle(actions, "Запускать Навигатор при открытии приложения", Options.AutoStartNavigator, value => Options.AutoStartNavigator = value);
         Toggle(actions, "Передавать местоположение на HUD (ESP32)", Options.SendLocation, SetLocationTransfer);
         Button(actions, "Энергосбережение приложения", OpenBatterySettings);
@@ -180,6 +182,7 @@ public sealed class MainActivity : Activity
     }
     private void OpenNavigator()
     {
+        _navigatorReturnPending = true;
         try
         {
             var launch = PackageManager?.GetLaunchIntentForPackage(NavigationSource.PackageName);
@@ -314,9 +317,30 @@ public sealed class MainActivity : Activity
     }
     private void StopHud()
     {
-        Options.Enabled = false;
-        if (HudService.Running) StartService(new Intent(this, typeof(HudService)).SetAction(HudService.StopAction));
         _uiMessage = null;
+        HudControl.Stop(this, close: false);
+    }
+    private void StopAndClose() => HudControl.Stop(this, close: true);
+    internal static void CloseFromAutomation()
+    {
+        var activity = _current;
+        if (activity is null || activity.IsFinishing || activity.IsDestroyed) return;
+        activity.RunOnUiThread(() =>
+        {
+            try
+            {
+                // A task may hold more than one instance after launcher/adb
+                // launches, so finish the whole affinity and then the task.
+                activity.FinishAffinity();
+                activity.FinishAndRemoveTask();
+            }
+            catch (Exception) { activity.Finish(); }
+        });
+    }
+    protected override void OnDestroy()
+    {
+        if (ReferenceEquals(_current, this)) _current = null;
+        base.OnDestroy();
     }
     private void CheckArrows()
     {
@@ -349,7 +373,19 @@ public sealed class MainActivity : Activity
     protected override void OnResume()
     {
         base.OnResume(); _visible = true; _generation++;
-        ConnectionRecovery.TryStart(this);
+        ConnectionRecovery.TryStart(this, Activation.App);
+        // Autostart works both on a cold start and when the system only resumes
+        // an existing task (launcher tap, return from the background).
+        bool returningFromNavigator = _navigatorReturnPending;
+        _navigatorReturnPending = false;
+        if (StartupPolicy.ShouldAutoStart(Options.AutoStartNavigator, returningFromNavigator, IsTestLaunch()))
+            TryAutoStartNavigator();
+        Tick();
+    }
+    protected override void OnNewIntent(Intent? intent)
+    {
+        base.OnNewIntent(intent);
+        if (intent is not null) Intent = intent;
         Tick();
     }
     public override void OnConfigurationChanged(Android.Content.Res.Configuration newConfig)
@@ -412,7 +448,7 @@ public sealed class MainActivity : Activity
         return item.EndsWith('!') ? "[" + arrow + "]" : arrow;
     }));
     private void Help() => new AlertDialog.Builder(this).SetTitle(BuildFlavor.Title)!
-        .SetMessage("1. Установите Яндекс Навигатор на " + BuildFlavor.DeviceName + ".\n\n2. Разрешите чтение навигации и доступ к уведомлениям для «" + BuildFlavor.Title + "». Если Android блокирует пункт: Настройки → Приложения → " + BuildFlavor.Title + " → ⋮ → Разрешить ограниченные настройки.\n\n3. Включите HUD, при необходимости отключите его от другого приложения, нажмите «Найти HUD» и выберите своё устройство.\n\n4. Откройте Навигатор: используйте обзор дороги или начните маршрут. Для фона разрешите уведомления самому Навигатору кнопкой «3». В Навигаторе: Настройки → Навигация → Фоновая навигация и Подсказки в фоновом режиме.\n\nКамера появляется, когда Навигатор показывает её предупреждение с расстоянием. Отдельного порога в метрах нет. Звук — из Навигатора. Ограничение на HUD остаётся текстом; улицы передаются латиницей.\n\nПолосы доступны только из свежих распознанных данных Навигатора. Сложные или недоступные полосы скрываются.\n\nРазрешите фоновую работу приложения в настройках питания Android. Автоподключение возобновляет ранее включённую передачу при открытии приложения, запуске Навигатора и загрузке Android. После сна соединение восстанавливается. Сохранённый HUD ищется автоматически; повторно выбирать его не нужно. Кнопка «Остановить» отключает и её, и автоматическое подключение до следующего запуска вручную.\n\nАвтозапуск Навигатора включается в «Настройках». Передача GPS-координат предназначена только для ESP32; для WiiYii она не используется.\n\nТребуется Android 8+ и доступный приложениям Bluetooth LE. Для чтения стрелки с экрана нужен Android 11+.")!
+        .SetMessage("1. Установите Яндекс Навигатор на " + BuildFlavor.DeviceName + ".\n\n2. Разрешите чтение навигации и доступ к уведомлениям для «" + BuildFlavor.Title + "». Если Android блокирует пункт: Настройки → Приложения → " + BuildFlavor.Title + " → ⋮ → Разрешить ограниченные настройки.\n\n3. Включите HUD, при необходимости отключите его от другого приложения, нажмите «Найти HUD» и выберите своё устройство.\n\n4. Откройте Навигатор: используйте обзор дороги или начните маршрут. Для фона разрешите уведомления самому Навигатору кнопкой «3». В Навигаторе: Настройки → Навигация → Фоновая навигация и Подсказки в фоновом режиме.\n\nКамера появляется, когда Навигатор показывает её предупреждение с расстоянием. Отдельного порога в метрах нет. Звук — из Навигатора. Ограничение на HUD остаётся текстом; улицы передаются латиницей.\n\nПолосы доступны только из свежих распознанных данных Навигатора. Сложные или недоступные полосы скрываются.\n\nРазрешите фоновую работу приложения в настройках питания Android. Автоподключение возобновляет ранее включённую передачу при открытии приложения, запуске Навигатора и загрузке Android. После сна соединение восстанавливается. Сохранённый HUD ищется автоматически; повторно выбирать его не нужно. Кнопка «Отключить HUD» останавливает передачу, но автоподключение остаётся включённым: при следующем открытии приложения или загрузке Android передача возобновится, а Навигатор сам её не перезапускает. Кнопка «Стоп» и действие «Стоп» в уведомлении дополнительно закрывают приложение. Для Tasker и других средств автоматизации доступны действия CONNECT, DISCONNECT, EXIT и OPEN — см. docs/AUTOMATION.ru.md.\n\nАвтозапуск Навигатора включается в «Настройках». Передача GPS-координат предназначена только для ESP32; для WiiYii она не используется.\n\nТребуется Android 8+ и доступный приложениям Bluetooth LE. Для чтения стрелки с экрана нужен Android 11+.")!
         .SetPositiveButton("Понятно", (_, _) => { })!.Show();
 
     private string DiagnosticText()

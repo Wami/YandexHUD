@@ -2,8 +2,8 @@ namespace YandexHudHeadUnit;
 
 internal static class StartupPolicy
 {
-    // Auto-start only when the app was opened normally. Rotation, returning from
-    // the background and explicit debug launches must not open Navigator again.
-    internal static bool ShouldAutoStart(bool enabled, bool firstCreate, bool testLaunch) =>
-        enabled && firstCreate && !testLaunch;
+    // Opening the app may launch Navigator. Returning from Navigator we started
+    // must not reopen it, and explicit debug launches never autostart anything.
+    internal static bool ShouldAutoStart(bool enabled, bool returningFromNavigator, bool testLaunch) =>
+        enabled && !returningFromNavigator && !testLaunch;
 }

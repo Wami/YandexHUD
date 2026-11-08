@@ -43,7 +43,7 @@ public sealed class YandexScreenService : AccessibilityService
         Connected = true;
         _labels = ManeuverLabels.Read(this);
 #if HEADUNIT
-        YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
+        YandexHudHeadUnit.ConnectionRecovery.TryStart(this, YandexHudHeadUnit.Activation.Navigator);
 #endif
         BridgeHub.Start();
         _thread = new HandlerThread("YandexScreenReader");
@@ -56,7 +56,7 @@ public sealed class YandexScreenService : AccessibilityService
     {
         bool navigation = NavigationSource.AcceptsPackage(e?.PackageName?.ToString());
 #if HEADUNIT
-        if (navigation) YandexHudHeadUnit.ConnectionRecovery.TryStart(this);
+        if (navigation) YandexHudHeadUnit.ConnectionRecovery.TryStart(this, YandexHudHeadUnit.Activation.Navigator);
 #endif
         // Fast polling runs only while Navigator is the active window. A window
         // state change wakes the worker immediately instead of waiting for the

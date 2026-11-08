@@ -6,8 +6,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/YandexHudHeadUnit/HudProtocol.cs" Link="HudProtocol.cs" />
+    <Compile Include="../../src/YandexHudHeadUnit/Esp32HudProtocol.cs" Link="Esp32HudProtocol.cs" />
+    <Compile Include="../../src/YandexHudHeadUnit/Esp32HudProtocol.Generated.cs" Link="Esp32HudProtocol.Generated.cs" />
     <Compile Include="../../src/YandexHudHeadUnit/HudPacketWriter.cs" Link="HudPacketWriter.cs" />
     <Compile Include="../../src/YandexHudHeadUnit/ReconnectPolicy.cs" Link="ReconnectPolicy.cs" />
+    <Compile Include="../../src/YandexHudHeadUnit/HudAutomation.cs" Link="HudAutomation.cs" />
     <Compile Include="../../src/YandexHudHeadUnit/HudArrowCheck.cs" Link="HudArrowCheck.cs" />
     <Compile Include="../../src/YandexHudHeadUnit/HudLocation.cs" Link="HudLocation.cs" />
     <Compile Include="../../src/YandexHudHeadUnit/StartupPolicy.cs" Link="StartupPolicy.cs" />
