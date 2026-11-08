@@ -164,12 +164,12 @@ BridgeState State(bool active, string? maneuver = null, double distance = 0, str
     double remaining = 0, double seconds = 0, string mode = "route", string? currentRoad = null,
     int limit = 0, double camera = 0, long cameraAt = 0, string? lanes = null,
     string source = "notification", bool screen = false, string? roadEvent = null,
-    double eventDistance = 0, long observed = 0) =>
+    double eventDistance = 0, long observed = 0, int roundaboutExit = 0) =>
     new(active, maneuver, distance, road, remaining, seconds, espTs, 1, observed,
         Mode: mode, CameraDistanceMeters: camera, CameraObservedAtUnixMilliseconds: cameraAt,
         Source: source, CurrentRoad: currentRoad, SpeedLimitKph: limit, RoadEvent: roadEvent,
         RoadEventDistanceMeters: eventDistance, ScreenReaderConnected: screen, Lanes: lanes,
-        LanesObservedAtUnixMilliseconds: lanes is null ? 0 : observed);
+        LanesObservedAtUnixMilliseconds: lanes is null ? 0 : observed, RoundaboutExit: roundaboutExit);
 
 var espIdle = State(false, mode: "idle", observed: espTs);
 var espRoute = State(true, "Right", 300, "Тверская", 12500, 3690, "route", "Ленина", 60,
@@ -182,6 +182,8 @@ var espRerouting = State(true, "Rerouting", 0, null, 12500, 3690, "route", null,
 var espFreeCamera = State(false, null, 0, null, 0, 0, "free", "Ленина", 60,
     camera: 1000, cameraAt: espTs, observed: espTs);
 var espRoundabout = State(true, "Roundabout", 350, null, 4000, 240, "route", null, 0, observed: espTs);
+var espRoundaboutExit = State(true, "Roundabout", 350, null, 4000, 240, "route", null, 0,
+    observed: espTs, roundaboutExit: 2);
 
 Vector("ESP32 idle", Esp32HudProtocol.EncodeState(espIdle, true, espTs, 100), Esp32HudVectors.Idle);
 Vector("ESP32 route right 300 m", Esp32HudProtocol.EncodeState(espRoute, true, espTs, 101), Esp32HudVectors.RouteRight300M);
@@ -192,7 +194,17 @@ Vector("ESP32 rerouting", Esp32HudProtocol.EncodeState(espRerouting, true, espTs
 Vector("ESP32 position", Esp32HudProtocol.EncodePosition(new HudLocation(55.7558, 37.6173, 12.5, 45, 3.5, espTs), 900), Esp32HudVectors.Position);
 Vector("ESP32 free camera", Esp32HudProtocol.EncodeState(espFreeCamera, true, espTs, 106), Esp32HudVectors.FreeCamera);
 Vector("ESP32 roundabout", Esp32HudProtocol.EncodeState(espRoundabout, true, espTs, 107), Esp32HudVectors.Roundabout);
+Vector("ESP32 roundabout exit", Esp32HudProtocol.EncodeState(espRoundaboutExit, true, espTs, 108), Esp32HudVectors.RoundaboutExit);
 Vector("ESP32 position NaN", Esp32HudProtocol.EncodePosition(new HudLocation(55.7558, 37.6173, null, null, 3.5, espTs), 901), Esp32HudVectors.PositionNan);
+
+Check(!HasGroup(Esp32HudProtocol.EncodeState(espRoundabout, true, espTs, 110),
+    Esp32HudProtocolConstants.GroupG11_ROUNDABOUT_EXIT), "ESP32 roundabout: no G11 without exit number");
+Check(!HasGroup(Esp32HudProtocol.EncodeState(State(true, "Right", 300, null, 0, 0, observed: espTs,
+    roundaboutExit: 2), true, espTs, 111), Esp32HudProtocolConstants.GroupG11_ROUNDABOUT_EXIT),
+    "ESP32 roundabout exit: G11 only with roundabout");
+Check(!HasGroup(Esp32HudProtocol.EncodeState(State(true, "Roundabout", 350, null, 0, 0, observed: espTs,
+    roundaboutExit: 100), true, espTs, 112), Esp32HudProtocolConstants.GroupG11_ROUNDABOUT_EXIT),
+    "ESP32 roundabout exit: out-of-range G11 omitted");
 
 // Coordinate round-trip: negative latitude/longitude, zero speed, NaN bearing.
 var espPosition2 = new HudLocation(-33.8688, 151.2093, 0.0, null, 1.5, espTs);

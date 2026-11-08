@@ -12,7 +12,7 @@ internal static class NavigationDiagnostics
     internal static void RecordScreen(IReadOnlyList<ScreenField> fields, BridgeState state)
     {
         if (!state.Active) return;
-        var values = fields.Where(f => ScreenNavigationReader.IsCurrentArrow(f.Id) || f.Id is "text_maneuverballoon_distance" or "text_maneuverballoon_metrics" or "text_manoeuvre_balloon_distance" or "text_manoeuvre_balloon_metrics")
+        var values = fields.Where(f => ScreenNavigationReader.IsCurrentArrow(f.Id) || f.Id is "text_maneuverballoon_distance" or "text_maneuverballoon_metrics" or "text_manoeuvre_balloon_distance" or "text_manoeuvre_balloon_metrics" or "exit_number_text")
             .Take(12).Select(f => $"{f.Id}: текст={Quote(f.Text)}, описание={Quote(f.Description)}");
         Volatile.Write(ref _screen, $"Последний экран маршрута: {state.SourceTimestamp}; поворот={state.Maneuver ?? "нет"}; расстояние={state.NextTurnDistanceMeters}\n" + string.Join("\n", values));
     }

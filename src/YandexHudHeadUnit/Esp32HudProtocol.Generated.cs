@@ -27,6 +27,7 @@ internal static class Esp32HudProtocolConstants
     public const byte GroupG8_REMAINING = 0x09;
     public const byte GroupG9_POSITION = 0x0A;
     public const byte GroupG10_META = 0x0B;
+    public const byte GroupG11_ROUNDABOUT_EXIT = 0x0C;
 
     // mode
     public const byte MODE_IDLE = 0;

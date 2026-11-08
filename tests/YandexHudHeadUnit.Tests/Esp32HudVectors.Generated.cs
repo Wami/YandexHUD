@@ -12,6 +12,7 @@ internal static class Esp32HudVectors
     public const string Position = "01028403000000000a248d28ed0dbee04b4010e9b7af03cf424000004841000034420000604000b92f5d9a0100000065";
     public const string FreeCamera = "01016a0000000000010102050cd09bd0b5d0bdd0b8d0bdd0b006013c0702e8030b0a000000b92f5d9a0100005fa5";
     public const string Roundabout = "01016b000000000001010102050c5e0100000908a00f0000f00000000b0a000000b92f5d9a0100001e54";
+    public const string RoundaboutExit = "01016c000000000001010102050c5e0100000c01020908a00f0000f00000000b0a000000b92f5d9a0100001abf";
     public const string PositionNan = "01028503000000000a248d28ed0dbee04b4010e9b7af03cf42400000c07f0000c07f0000604000b92f5d9a010000d759";
 
     public static readonly (string Id, string Hex)[] All =
@@ -25,12 +26,13 @@ internal static class Esp32HudVectors
         ("position", Position),
         ("free_camera", FreeCamera),
         ("roundabout", Roundabout),
+        ("roundabout_exit", RoundaboutExit),
         ("position_nan", PositionNan),
     ];
     public const string BadCrc = "010164000000000001fe000b0a000000b92f5d9a0100009bf2";
     public const string UnknownVersion = "02016400000000000101000b0a000000b92f5d9a010000865d";
     public const string UnknownType = "01096400000000000101000b0a000000b92f5d9a01000038ac";
-    public const string UnknownTlv = "01016400000000000101000b0a000000b92f5d9a0100000c02beef7cea";
+    public const string UnknownTlv = "01016400000000000101000b0a000000b92f5d9a0100000d02beefc89c";
     public const string WrongGroupLength = "01016e000000000001010106023c004636";
     public const string DuplicateGroup = "01016f000000000001010106013c0601507b1c";
 }

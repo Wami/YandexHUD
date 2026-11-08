@@ -69,6 +69,9 @@ internal static class Esp32HudProtocol
                 AddTlv(tlvs, Esp32HudProtocolConstants.GroupG1_MANEUVER, value);
             }
 
+            if (state.Maneuver == "Roundabout" && state.RoundaboutExit is >= 1 and <= 99)
+                AddTlv(tlvs, Esp32HudProtocolConstants.GroupG11_ROUNDABOUT_EXIT, [(byte)state.RoundaboutExit]);
+
             if (lanesEnabled && !rerouting && ParseLanes(state.Lanes, state.LanesObservedAtUnixMilliseconds, now) is { } lanes)
             {
                 var value = new byte[1 + lanes.Count];

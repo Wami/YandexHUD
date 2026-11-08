@@ -151,6 +151,37 @@ var freshSelector = new YandexNotificationBridge.SourceSelector();
 Equal("notification", freshSelector.Select(screen with { ObservedAtUnixMilliseconds = now - 3000 }, notification, now).Source, "stale screen falls back to actual notification");
 Equal(false, freshSelector.Select(null, YandexNotificationBridge.BridgeState.Inactive, now).Active, "no source clears route");
 Equal<string?>("Roundabout", YandexNotificationBridge.ScreenNavigationReader.ReadManeuver("На круговом движении третий съезд"), "roundabout maps to a neutral symbol without guessing the exit");
+Equal<int?>(2, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("второй съезд"), "roundabout exit word");
+Equal<int?>(3, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("3-й съезд"), "roundabout exit numeric");
+Equal<int?>(4, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("съезд 4"), "roundabout exit after noun");
+Equal<int?>(2, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("take the 2nd exit"), "roundabout exit English");
+Equal<int?>(null, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("1-й съезд и 2-й съезд"), "conflicting exit numbers are not guessed");
+Equal<int?>(null, YandexNotificationBridge.ScreenNavigationReader.ReadRoundaboutExit("Поверните направо"), "plain turn has no exit number");
+Equal<int?>(2, YandexNotificationBridge.ScreenNavigationReader.ReadExitNumberValue("2"), "bare exit-number view");
+Equal<int?>(2, YandexNotificationBridge.ScreenNavigationReader.ReadExitNumberValue("2-й"), "suffixed bare exit-number view");
+var roundaboutFields = new List<YandexNotificationBridge.ScreenField>
+{
+    new("resetroutebutton2", null, null),
+    new("image_maneuverballoon_maneuver", null, "На круговом движении"),
+    new("exit_number_text", "1-й съезд", null),
+    new("text_maneuverballoon_distance", "300", null), new("text_maneuverballoon_metrics", "м", null)
+};
+var roundaboutState = YandexNotificationBridge.ScreenNavigationReader.Read(roundaboutFields, now);
+Equal("Roundabout", roundaboutState.Maneuver, "roundabout screen maneuver");
+Equal(1, roundaboutState.RoundaboutExit, "roundabout screen exit number");
+Equal(0, YandexNotificationBridge.ScreenNavigationReader.Read(
+    roundaboutFields.Where(f => f.Id != "exit_number_text").ToList(), now).RoundaboutExit,
+    "missing exit-number view means no number");
+var staleNextTurn = YandexNotificationBridge.ScreenNavigationReader.Read(
+    [..roundaboutFields.Where(f => f.Id != "image_maneuverballoon_maneuver"),
+      new("image_maneuverballoon_maneuver", null, "Поверните направо")], now);
+Equal("Roundabout", staleNextTurn.Maneuver, "exit-number view wins over a next-turn arrow");
+Equal(1, staleNextTurn.RoundaboutExit, "exit-number view keeps the number next to a next-turn arrow");
+var exitOnly = YandexNotificationBridge.ScreenNavigationReader.Read(
+    [..roundaboutFields.Where(f => f.Id is not "image_maneuverballoon_maneuver" and not "exit_number_text"),
+      new("exit_number_text", "3-й съезд", null)], now);
+Equal("Roundabout", exitOnly.Maneuver, "exit-number view identifies a roundabout without an arrow description");
+Equal(3, exitOnly.RoundaboutExit, "exit-number view works without an arrow description");
 var slowHud = new SlowHud();
 var pump = new HudOutputPump(slowHud);
 pump.Publish(new() { NextTurnRoadName = "first", CameraDistance = 300 });

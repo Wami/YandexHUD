@@ -16,6 +16,7 @@ internal static class ScreenNavigationReader
     internal static readonly HashSet<string> FieldIds = new(StringComparer.Ordinal)
     {
         "image_maneuverballoon_maneuver", "text_maneuverballoon_distance", "text_maneuverballoon_metrics",
+        "exit_number_text",
         "image_manoeuvre_balloon_manoeuvre", "text_manoeuvre_balloon_distance", "text_manoeuvre_balloon_metrics",
         "text_nextstreet", "status_panel_text", "textview_eta_distance", "textview_eta_time",
         "resetroutebutton2", "text_speedlimit", "custom_view_speed_limit_primary_text",
@@ -29,6 +30,15 @@ internal static class ScreenNavigationReader
     private static readonly Regex RoundaboutPattern = new(
         @"\b(?:круг\w*|кольц\w*|roundabout|traffic\s+circle|rotary)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ExitNumberPattern = new(
+        @"(?:(?<before>\d{1,2})(?:-?(?:й|ый|ой|м|го|st|nd|rd|th))?\s+(?:съезд\p{L}*|exit))|(?:(?:съезд\p{L}*|exit)\s*(?:№\s*)?(?<after>\d{1,2}))",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex ExitWordPattern = new(
+        @"\b(?<word>перв\p{L}*|втор\p{L}*|трет\p{L}*|четверт\p{L}*|пят\p{L}*|шест\p{L}*|седьм\p{L}*|восьм\p{L}*|девят\p{L}*|десят\p{L}*|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+(?:съезд\p{L}*|exit)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex BareExitPattern = new(
+        @"^\s*(?<n>\d{1,2})(?:-?(?:й|ый|ой|м|го))?\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
 
     internal static BridgeState Read(IReadOnlyList<ScreenField> fields, long now, IReadOnlyDictionary<string, string>? labels = null)
     {
@@ -39,10 +49,31 @@ internal static class ScreenNavigationReader
         if (!driving) return BridgeState.Inactive with { Source = "screen", ObservedAtUnixMilliseconds = now, SourceTimestamp = now };
         // A landscape layout can contain an empty duplicate before the actual
         // maneuver. Read the populated field, and reject conflicting directions.
-        var directions = fields.Where(f => IsCurrentArrow(f.Id))
-            .Select(f => ReadManeuver(f.Description, labels) ?? ReadManeuver(f.Text, labels))
-            .Where(d => d is not null).Distinct().ToArray();
+        var candidates = fields.Where(f => IsCurrentArrow(f.Id))
+            .Select(f =>
+            {
+                var direction = ReadManeuver(f.Description, labels) ?? ReadManeuver(f.Text, labels);
+                var exit = direction == "Roundabout"
+                    ? ReadRoundaboutExit(f.Description) ?? ReadRoundaboutExit(f.Text) ?? 0
+                    : 0;
+                return (Direction: direction, Exit: exit);
+            })
+            .Where(c => c.Direction is not null).ToArray();
+        var directions = candidates.Select(c => c.Direction!).Distinct().ToArray();
+        var exitField = fields.FirstOrDefault(f => f.Id == "exit_number_text");
+        int? dedicatedExit = ReadExitNumberValue(exitField?.Text) ?? ReadExitNumberValue(exitField?.Description);
         var maneuver = route && directions.Length == 1 ? directions[0] : null;
+        var exits = candidates.Where(c => c.Exit > 0).Select(c => c.Exit).ToList();
+        // The dedicated exit-number view is shown only for a roundabout. On the
+        // real screen the current arrow element can still describe the next
+        // turn ("Поверните направо"), so this view is authoritative.
+        if (route && dedicatedExit is int dedicated)
+        {
+            maneuver = "Roundabout";
+            exits.Add(dedicated);
+        }
+        var distinctExits = exits.Distinct().ToArray();
+        int roundaboutExit = maneuver == "Roundabout" && distinctExits.Length == 1 ? distinctExits[0] : 0;
         var distance = ReadTurnDistance(fields);
         if (distance is null) maneuver = null;
         var camera = CameraText.ApproachingDistance(Text("distanceToCamera"));
@@ -58,7 +89,8 @@ internal static class ScreenNavigationReader
             route ? ReadDuration(Text("textview_eta_time")) : 0, now, 0, now,
             CameraDistanceMeters: camera, CameraObservedAtUnixMilliseconds: now, Source: "screen",
             Mode: route ? "route" : "free", CurrentRoad: Text("status_panel_text"), SpeedLimitKph: limit,
-            RoadEvent: roadEvent, RoadEventDistanceMeters: eventDistance, SourceTimestamp: now);
+            RoadEvent: roadEvent, RoadEventDistanceMeters: eventDistance, SourceTimestamp: now,
+            RoundaboutExit: distance is null ? 0 : roundaboutExit);
     }
 
     internal static bool IsCurrentArrow(string id) => id is "image_maneuverballoon_maneuver" or "image_manoeuvre_balloon_manoeuvre";
@@ -105,6 +137,53 @@ internal static class ScreenNavigationReader
             _ => null
         };
     }
+    // The Yandex screen exposes the exit number as text ("1-й съезд",
+    // "второй съезд", "2nd exit"). The Android notification does not contain
+    // it: the exit number is a separate field of the on-screen balloon only.
+    internal static int? ReadRoundaboutExit(string? text)
+    {
+        string value = NormalizeManeuver(text).Replace('ё', 'е');
+        var numbers = new List<int>();
+        foreach (Match match in ExitNumberPattern.Matches(value))
+        {
+            string raw = match.Groups["before"].Success ? match.Groups["before"].Value : match.Groups["after"].Value;
+            if (int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out int number)) numbers.Add(number);
+        }
+        foreach (Match match in ExitWordPattern.Matches(value))
+        {
+            if (WordNumber(match.Groups["word"].Value) is int number) numbers.Add(number);
+        }
+        var valid = numbers.Where(n => n is >= 1 and <= 99).Distinct().ToArray();
+        return valid.Length == 1 ? valid[0] : null;
+    }
+
+    // The dedicated exit_number_text view may contain either the full phrase
+    // ("1-й съезд") or only the number; accept both forms for that view.
+    internal static int? ReadExitNumberValue(string? text)
+    {
+        if (ReadRoundaboutExit(text) is int phrase) return phrase;
+        var match = BareExitPattern.Match(NormalizeManeuver(text));
+        if (!match.Success) return null;
+        return int.TryParse(match.Groups["n"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) &&
+               number is >= 1 and <= 99 ? number : null;
+    }
+
+    private static int? WordNumber(string word)
+    {
+        word = word.ToLowerInvariant();
+        if (word.StartsWith("перв") || word == "first") return 1;
+        if (word.StartsWith("втор") || word == "second") return 2;
+        if (word.StartsWith("трет") || word == "third") return 3;
+        if (word.StartsWith("четверт") || word == "fourth") return 4;
+        if (word.StartsWith("пят") || word == "fifth") return 5;
+        if (word.StartsWith("шест") || word == "sixth") return 6;
+        if (word.StartsWith("седьм") || word == "seventh") return 7;
+        if (word.StartsWith("восьм") || word == "eighth") return 8;
+        if (word.StartsWith("девят") || word == "ninth") return 9;
+        if (word.StartsWith("десят") || word == "tenth") return 10;
+        return null;
+    }
+
     private static string? ReadEvent(string? text)
     {
         string value = (text ?? "").Trim().ToLowerInvariant();
